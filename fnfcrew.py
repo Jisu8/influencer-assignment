@@ -2156,11 +2156,14 @@ def main():
     
     st.title("🎯 인플루언서 배정 앱")
     
-    # GitHub 연결 상태 확인
+    # GitHub 연결 상태 확인 (사이드바 맨 위에 배치)
     with st.sidebar:
+        st.markdown("---")
         st.markdown("### 🔄 GitHub 연결 상태")
-        if st.button("연결 상태 확인", key="sync_check"):
+        st.markdown("GitHub Actions 자동 동기화 연결을 확인합니다.")
+        if st.button("🔗 연결 상태 확인", key="sync_check", use_container_width=True):
             check_github_connection()
+        st.markdown("---")
     
     # 새로고침 시 전체 선택 상태 초기화
     st.session_state.select_all = False
