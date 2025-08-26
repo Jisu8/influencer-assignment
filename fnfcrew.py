@@ -2,8 +2,79 @@ import streamlit as st
 import pandas as pd
 import os
 import time
-from datetime import datetime
 import io
+from datetime import datetime
+import subprocess
+import sys
+
+# =============================================================================
+# 파일 경로 설정
+# =============================================================================
+
+# 현재 스크립트의 디렉토리를 기준으로 상대 경로 설정
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(SCRIPT_DIR, "data")
+
+# 데이터 파일 경로
+ASSIGNMENT_FILE = os.path.join(DATA_DIR, "assignment_history.csv")
+EXECUTION_FILE = os.path.join(DATA_DIR, "execution_status.csv")
+INFLUENCER_FILE = os.path.join(DATA_DIR, "influencer.csv")
+
+# 데이터 디렉토리가 없으면 생성
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# =============================================================================
+# GitHub 자동 푸시 기능
+# =============================================================================
+
+def auto_push_to_github(commit_message="Auto-update data files"):
+    """데이터 변경 시 자동으로 GitHub에 푸시"""
+    try:
+        # Git 상태 확인
+        result = subprocess.run(['git', 'status', '--porcelain'], 
+                              capture_output=True, text=True, cwd=SCRIPT_DIR)
+        
+        if result.stdout.strip():  # 변경사항이 있는 경우
+            # 변경사항 추가
+            subprocess.run(['git', 'add', '.'], cwd=SCRIPT_DIR, check=True)
+            
+            # 커밋
+            subprocess.run(['git', 'commit', '-m', commit_message], 
+                         cwd=SCRIPT_DIR, check=True)
+            
+            # 푸시
+            subprocess.run(['git', 'push', 'origin', 'master'], 
+                         cwd=SCRIPT_DIR, check=True)
+            
+            st.success(f"✅ 데이터가 GitHub에 자동 저장되었습니다!")
+            return True
+        else:
+            # 변경사항이 없는 경우
+            return False
+            
+    except subprocess.CalledProcessError as e:
+        st.error(f"❌ GitHub 자동 푸시 중 오류가 발생했습니다: {e}")
+        return False
+    except Exception as e:
+        st.error(f"❌ 예상치 못한 오류가 발생했습니다: {e}")
+        return False
+
+def save_with_auto_push(data, file_path, commit_message=None):
+    """데이터 저장 후 자동으로 GitHub에 푸시"""
+    try:
+        # 데이터 저장
+        data.to_csv(file_path, index=False, encoding="utf-8")
+        
+        # 커밋 메시지 생성
+        if commit_message is None:
+            filename = os.path.basename(file_path)
+            commit_message = f"Auto-update {filename}"
+        
+        # GitHub에 자동 푸시
+        auto_push_to_github(commit_message)
+        
+    except Exception as e:
+        st.error(f"❌ 데이터 저장 중 오류가 발생했습니다: {e}")
 
 # =============================================================================
 # 상수 정의
@@ -468,7 +539,8 @@ def save_assignments(new_assignments, existing_history):
     else:
         updated_history = result_df
     
-    updated_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+    # 자동 푸시와 함께 저장
+    save_with_auto_push(updated_history, ASSIGNMENT_FILE, "Add new assignments")
 
 def clean_brand_columns(df):
     """브랜드 컬럼 정리: 쉼표가 포함된 브랜드 값을 분리"""
@@ -557,7 +629,8 @@ def execute_manual_assignment(selected_month, selected_season, brand, influencer
             # 새로운 배정 추가
             new_assignment = create_manual_assignment_info(influencer_id, brand, selected_month, df)
             assignment_history = pd.concat([assignment_history, pd.DataFrame([new_assignment])], ignore_index=True)
-            assignment_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+            # 자동 푸시와 함께 저장
+            save_with_auto_push(assignment_history, ASSIGNMENT_FILE, f"Add manual assignment: {influencer_name} ({brand})")
             
             st.sidebar.success(f"✅ {influencer_name} ({brand}) 배정 추가됨!")
             
@@ -1123,7 +1196,8 @@ def update_assignment_urls(url_changes):
         if mask.any():
             assignment_history.loc[mask, '집행URL'] = change['집행URL']
     
-    assignment_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+    # 자동 푸시와 함께 저장
+    save_with_auto_push(assignment_history, ASSIGNMENT_FILE, "Update assignment URLs")
 
 def update_execution_data(changes, add=True):
     """실행 데이터 업데이트"""
@@ -1150,7 +1224,8 @@ def update_execution_data(changes, add=True):
             # 배정완료로 되돌리기: 실행 데이터에서만 제거 (배정 데이터는 유지)
             execution_data = execution_data[~existing_mask]
     
-    execution_data.to_csv(EXECUTION_FILE, index=False, encoding="utf-8")
+    # 자동 푸시와 함께 저장
+    save_with_auto_push(execution_data, EXECUTION_FILE, "Update execution data")
 
 def render_assignment_buttons(edited_df, df):
     """배정 버튼들 렌더링"""
@@ -1384,7 +1459,8 @@ def delete_assignments(deletable_rows):
     
     rows_to_remove = list(set(rows_to_remove))
     assignment_history = assignment_history.drop(rows_to_remove)
-    assignment_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+    # 자동 푸시와 함께 저장
+    save_with_auto_push(assignment_history, ASSIGNMENT_FILE, "Delete assignments")
 
 def reset_assignments():
     """배정 초기화"""
@@ -1397,14 +1473,16 @@ def reset_assignments():
         if not assignment_history.empty:
             # 해당 월의 배정 제거
             assignment_history = assignment_history[assignment_history['배정월'] != current_month]
-            assignment_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+            # 자동 푸시와 함께 저장
+            save_with_auto_push(assignment_history, ASSIGNMENT_FILE, f"Reset assignments for {current_month}")
         
         # 선택된 월의 집행 데이터만 삭제
         if os.path.exists(EXECUTION_FILE):
             execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
             if not execution_data.empty:
                 execution_data = execution_data[execution_data['배정월'] != current_month]
-                execution_data.to_csv(EXECUTION_FILE, index=False, encoding="utf-8")
+                # 자동 푸시와 함께 저장
+                save_with_auto_push(execution_data, EXECUTION_FILE, f"Reset assignments for {current_month}")
     else:
         # 월이 선택되지 않은 경우 전체 초기화
         if os.path.exists(ASSIGNMENT_FILE):
@@ -1524,7 +1602,8 @@ def update_assignment_history(assignment_update_data, df=None):
     
     combined_assignment_data = pd.concat([existing_assignment_data, assignment_update_data], ignore_index=True)
     combined_assignment_data = combined_assignment_data.drop_duplicates(subset=['ID', '브랜드', '배정월'], keep='last')
-    combined_assignment_data.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+    # 자동 푸시와 함께 저장
+    save_with_auto_push(combined_assignment_data, ASSIGNMENT_FILE, "Update assignment history from Excel upload")
 
 def update_execution_history(execution_update_data):
     """실행 이력 업데이트"""
@@ -1535,7 +1614,8 @@ def update_execution_history(execution_update_data):
     
     combined_execution_data = pd.concat([existing_execution_data, execution_update_data], ignore_index=True)
     combined_execution_data = combined_execution_data.drop_duplicates(subset=['ID', '브랜드', '배정월'], keep='last')
-    combined_execution_data.to_csv(EXECUTION_FILE, index=False, encoding="utf-8")
+    # 자동 푸시와 함께 저장
+    save_with_auto_push(combined_execution_data, EXECUTION_FILE, "Update execution history from Excel upload")
 
 def render_influencer_tab(df):
     """인플루언서별 탭 렌더링"""
@@ -1901,7 +1981,8 @@ def handle_influencer_changes(edited_influencer_df):
                                 })
         
         if new_assignments or updated_assignments:
-            assignment_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+            # 자동 푸시와 함께 저장
+            save_with_auto_push(assignment_history, ASSIGNMENT_FILE, "Update influencer assignments")
             
             if new_assignments and updated_assignments:
                 message = f"✅ {len(new_assignments)}개의 새로운 배정이 추가되고 {len(updated_assignments)}개의 배정이 수정되었습니다!"
