@@ -42,12 +42,16 @@ def auto_push_to_github(commit_message="Auto-update data files"):
             subprocess.run(['git', 'commit', '-m', commit_message], 
                          cwd=SCRIPT_DIR, check=True)
             
-            # 푸시
-            subprocess.run(['git', 'push', 'origin', 'master'], 
-                         cwd=SCRIPT_DIR, check=True)
+            # 푸시 (더 강력한 에러 처리)
+            push_result = subprocess.run(['git', 'push', 'origin', 'master'], 
+                                       cwd=SCRIPT_DIR, capture_output=True, text=True)
             
-            st.success(f"✅ 데이터가 GitHub에 자동 저장되었습니다!")
-            return True
+            if push_result.returncode == 0:
+                st.success(f"✅ 데이터가 GitHub에 자동 저장되었습니다!")
+                return True
+            else:
+                st.error(f"❌ GitHub 푸시 실패: {push_result.stderr}")
+                return False
         else:
             # 변경사항이 없는 경우
             return False
@@ -57,6 +61,24 @@ def auto_push_to_github(commit_message="Auto-update data files"):
         return False
     except Exception as e:
         st.error(f"❌ 예상치 못한 오류가 발생했습니다: {e}")
+        return False
+
+def check_data_sync_status():
+    """데이터 동기화 상태 확인"""
+    try:
+        # Git 상태 확인
+        result = subprocess.run(['git', 'status', '--porcelain'], 
+                              capture_output=True, text=True, cwd=SCRIPT_DIR)
+        
+        if result.stdout.strip():
+            st.warning("⚠️ 로컬에 커밋되지 않은 변경사항이 있습니다.")
+            return False
+        else:
+            st.success("✅ 데이터가 동기화되었습니다.")
+            return True
+            
+    except Exception as e:
+        st.error(f"❌ 동기화 상태 확인 중 오류: {e}")
         return False
 
 def save_with_auto_push(data, file_path, commit_message=None):
@@ -71,7 +93,10 @@ def save_with_auto_push(data, file_path, commit_message=None):
             commit_message = f"Auto-update {filename}"
         
         # GitHub에 자동 푸시
-        auto_push_to_github(commit_message)
+        success = auto_push_to_github(commit_message)
+        
+        if not success:
+            st.warning("⚠️ 자동 푸시에 실패했습니다. 수동으로 동기화가 필요할 수 있습니다.")
         
     except Exception as e:
         st.error(f"❌ 데이터 저장 중 오류가 발생했습니다: {e}")
@@ -1467,28 +1492,35 @@ def reset_assignments():
     # 현재 선택된 월을 정확히 가져오기
     current_month = st.session_state.get('tab1_month_filter', '')
     
-    if current_month:
-        # 선택된 월의 배정만 삭제
-        assignment_history = load_assignment_history()
-        if not assignment_history.empty:
-            # 해당 월의 배정 제거
-            assignment_history = assignment_history[assignment_history['배정월'] != current_month]
-            # 자동 푸시와 함께 저장
-            save_with_auto_push(assignment_history, ASSIGNMENT_FILE, f"Reset assignments for {current_month}")
-        
-        # 선택된 월의 집행 데이터만 삭제
-        if os.path.exists(EXECUTION_FILE):
-            execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
-            if not execution_data.empty:
-                execution_data = execution_data[execution_data['배정월'] != current_month]
+    try:
+        if current_month:
+            # 선택된 월의 배정만 삭제
+            assignment_history = load_assignment_history()
+            if not assignment_history.empty:
+                # 해당 월의 배정 제거
+                assignment_history = assignment_history[assignment_history['배정월'] != current_month]
                 # 자동 푸시와 함께 저장
-                save_with_auto_push(execution_data, EXECUTION_FILE, f"Reset assignments for {current_month}")
-    else:
-        # 월이 선택되지 않은 경우 전체 초기화
-        if os.path.exists(ASSIGNMENT_FILE):
-            os.remove(ASSIGNMENT_FILE)
-        if os.path.exists(EXECUTION_FILE):
-            os.remove(EXECUTION_FILE)
+                save_with_auto_push(assignment_history, ASSIGNMENT_FILE, f"Reset assignments for {current_month}")
+            
+            # 선택된 월의 집행 데이터만 삭제
+            if os.path.exists(EXECUTION_FILE):
+                execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
+                if not execution_data.empty:
+                    execution_data = execution_data[execution_data['배정월'] != current_month]
+                    # 자동 푸시와 함께 저장
+                    save_with_auto_push(execution_data, EXECUTION_FILE, f"Reset assignments for {current_month}")
+            
+            st.success(f"✅ {current_month} 배정이 초기화되었습니다!")
+        else:
+            # 월이 선택되지 않은 경우 전체 초기화
+            if os.path.exists(ASSIGNMENT_FILE):
+                os.remove(ASSIGNMENT_FILE)
+            if os.path.exists(EXECUTION_FILE):
+                os.remove(EXECUTION_FILE)
+            st.success("✅ 모든 배정이 초기화되었습니다!")
+            
+    except Exception as e:
+        st.error(f"❌ 배정 초기화 중 오류가 발생했습니다: {e}")
 
 def render_excel_upload_section(df):
     """엑셀 업로드 섹션 렌더링"""
@@ -2022,6 +2054,12 @@ def main():
     load_css()
     
     st.title("🎯 인플루언서 배정 앱")
+    
+    # 데이터 동기화 상태 확인
+    with st.sidebar:
+        st.markdown("### 🔄 데이터 동기화 상태")
+        if st.button("동기화 상태 확인", key="sync_check"):
+            check_data_sync_status()
     
     # 새로고침 시 전체 선택 상태 초기화
     st.session_state.select_all = False
