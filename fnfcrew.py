@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import time
 from datetime import datetime
 import io
 
@@ -18,7 +19,7 @@ BRANDS = ["MLB", "DX", "DV", "ST"]
 BRAND_OPTIONS = ["전체"] + BRANDS
 
 # 시즌 설정
-SEASON_OPTIONS = ["25FW", "26SS"]
+SEASON_OPTIONS = ["25FW", "26SS", "26FW", "27SS"]
 FW_MONTHS = ["9월", "10월", "11월", "12월", "1월", "2월"]
 SS_MONTHS = ["3월", "4월", "5월", "6월", "7월", "8월"]
 
@@ -102,6 +103,29 @@ def load_css():
             font-size: 0.8em;
             padding: 2px 0;
         }
+        
+        /* 컨테이너 기반 일관된 레이아웃 - 임시 비활성화 */
+        /*
+        .stContainer {
+            margin: 10px 0 !important;
+            padding: 10px !important;
+            border-radius: 5px !important;
+        }
+        
+        .stContainer:first-child {
+            min-height: 120px !important;
+            max-height: 120px !important;
+        }
+        
+        .stContainer:last-child {
+            min-height: 600px !important;
+        }
+        
+        .stDataFrame {
+            min-width: 100% !important;
+            width: 100% !important;
+        }
+        */
     </style>
     """, unsafe_allow_html=True)
 
@@ -145,6 +169,8 @@ def add_execution_data(df, execution_file=EXECUTION_FILE):
     
     return df
 
+
+
 def reorder_columns(df, expected_columns):
     """컬럼 순서 재정렬"""
     available_columns = [col for col in expected_columns if col in df.columns]
@@ -154,7 +180,12 @@ def reorder_columns(df, expected_columns):
 
 def get_month_options(season):
     """시즌에 따른 월 옵션 반환"""
-    return FW_MONTHS if season == "25FW" else SS_MONTHS
+    if season in ["25FW", "26FW"]:
+        return FW_MONTHS
+    elif season in ["26SS", "27SS"]:
+        return SS_MONTHS
+    else:
+        return FW_MONTHS  # 기본값
 
 def create_warning_container(message, key):
     """경고 메시지 컨테이너 생성"""
@@ -224,16 +255,22 @@ def check_previous_month_completion(selected_month, selected_season, df):
             incomplete_assignments = []
             execution_data = load_execution_data()
             
-            if not execution_data.empty:
-                for _, assignment in previous_month_assignments.iterrows():
+            for _, assignment in previous_month_assignments.iterrows():
+                # execution_data가 비어있거나 필요한 컬럼이 없으면 모든 배정을 미완료로 처리
+                if execution_data.empty or 'ID' not in execution_data.columns:
+                    incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']})")
+                else:
                     exec_mask = (
                         (execution_data['ID'] == assignment['ID']) &
                         (execution_data['브랜드'] == assignment['브랜드']) &
                         (execution_data['배정월'] == assignment['배정월'])
                     )
                     
-                    if not exec_mask.any() or execution_data.loc[exec_mask, '실제집행수'].iloc[0] == 0:
-                        incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']})")
+                    # 해당 배정에 대한 집행 데이터가 없거나 실제집행수가 0이면 집행상태 미업데이트
+                    if not exec_mask.any():
+                        incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']}) - 집행상태 미업데이트")
+                    elif execution_data.loc[exec_mask, '실제집행수'].iloc[0] == 0:
+                        incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']}) - 집행상태 미업데이트")
             
             if incomplete_assignments:
                 return False, incomplete_assignments, previous_month
@@ -242,7 +279,7 @@ def check_previous_month_completion(selected_month, selected_season, df):
 
 def display_incomplete_assignments(incomplete_assignments, previous_month, df):
     """미완료 배정 목록 표시"""
-    st.error(f"❌ {previous_month} 배정된 인플루언서 중 결과가 업데이트되지 않은 배정이 있습니다. 모든 이전 달 결과가 업데이트 된 상태여야 다음 달 배정이 가능합니다.")
+    st.error(f"❌ {previous_month} 배정된 인플루언서 중 집행상태가 업데이트되지 않은 배정이 있습니다. 모든 이전 달 집행상태가 업데이트된 상태여야 다음 달 배정이 가능합니다.")
     
     if st.button("🔙 돌아가기", type="secondary", use_container_width=True):
         st.rerun()
@@ -284,6 +321,31 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
     selected_month_assignments = existing_history[existing_history["배정월"] == selected_month] if not existing_history.empty else pd.DataFrame()
     already_assigned_influencers = set(selected_month_assignments["ID"].unique()) if not selected_month_assignments.empty else set()
     
+    # 같은 브랜드로 이미 배정된 경우 확인
+    existing_brand_assignments = {}
+    if not selected_month_assignments.empty:
+        for _, row in selected_month_assignments.iterrows():
+            brand = row['브랜드']
+            influencer_id = row['ID']
+            influencer_name = row['이름']
+            if brand not in existing_brand_assignments:
+                existing_brand_assignments[brand] = []
+            existing_brand_assignments[brand].append(f"{influencer_name} ({influencer_id})")
+    
+    # 배정할 브랜드 중 이미 배정된 브랜드가 있는지 확인
+    conflicting_brands = []
+    for brand, qty in quantities.items():
+        if qty > 0 and brand in existing_brand_assignments:
+            conflicting_brands.append(brand)
+    
+    if conflicting_brands:
+        warning_message = f"⚠️ {selected_month}에 다음 브랜드로 이미 배정된 인플루언서가 있습니다:\n"
+        for brand in conflicting_brands:
+            influencers = existing_brand_assignments[brand]
+            warning_message += f"• {brand}: {', '.join(influencers)}\n"
+        warning_message += f"\n기존 배정에 추가로 배정하시겠습니까?"
+        st.warning(warning_message)
+    
     if already_assigned_influencers:
         st.info(f"ℹ️ {selected_month}에 이미 배정된 인플루언서가 있습니다. 기존 배정에 추가로 배정합니다.")
     
@@ -303,6 +365,35 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
                 if assigned_count >= qty:
                     break
                 
+                # 배정 핵심 로직: 전월까지 집행완료 + 현재까지 배정을 고려한 잔여수 확인
+                brand_contract_qty = row[f"{brand.lower()}_qty"]
+                
+                # 1. 전월까지의 모든 집행완료 데이터 확인
+                execution_data = load_execution_data()
+                total_executed_count = 0
+                if not execution_data.empty:
+                    # 해당 인플루언서의 해당 브랜드 모든 집행완료 수
+                    exec_mask = (
+                        (execution_data['ID'] == row['id']) &
+                        (execution_data['브랜드'] == brand)
+                    )
+                    if exec_mask.any():
+                        total_executed_count = execution_data.loc[exec_mask, '실제집행수'].sum()
+                
+                # 2. 현재까지의 모든 배정 수 확인
+                existing_assignments = existing_history[
+                    (existing_history['ID'] == row['id']) & 
+                    (existing_history['브랜드'] == brand)
+                ]
+                total_assigned_count = len(existing_assignments)
+                
+                # 3. 실제 잔여수 계산: 계약수 - (집행완료 + 배정)
+                actual_remaining = max(0, brand_contract_qty - total_executed_count - total_assigned_count)
+                
+                # 4. 잔여수가 없으면 배정 불가
+                if actual_remaining <= 0:
+                    continue  # 잔여수가 없으면 건너뛰기
+                
                 # 배정 정보 생성
                 assignment_info = create_assignment_info(row, brand, selected_month, df)
                 results.append(assignment_info)
@@ -314,6 +405,8 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
     if results:
         save_assignments(results, existing_history)
         st.success(f"✅ {selected_month} 배정이 완료되었습니다!")
+        # 사용자가 알림을 읽을 수 있도록 3초 대기
+        time.sleep(3)
         st.rerun()
     else:
         st.warning(f"⚠️ {selected_month}에 배정할 수 있는 인플루언서가 없습니다.")
@@ -350,6 +443,8 @@ def create_assignment_info(row, brand, selected_month, df):
         "이름": row["name"],
         "배정월": selected_month,
         "FLW": row["follower"],
+        "1회계약단가": row["unit_fee"],
+        "2차활용": row["sec_usage"],
         "브랜드_계약수": original_brand_qty,
         "브랜드_실집행수": brand_execution_count,
         "브랜드_잔여수": brand_remaining,
@@ -363,12 +458,42 @@ def save_assignments(new_assignments, existing_history):
     """배정 정보 저장"""
     result_df = pd.DataFrame(new_assignments)
     
+    # 브랜드 필드 정리: 쉼표가 포함된 브랜드 값을 분리
+    result_df = clean_brand_columns(result_df)
+    
     if not existing_history.empty:
+        # 기존 데이터도 정리
+        existing_history = clean_brand_columns(existing_history)
         updated_history = pd.concat([existing_history, result_df], ignore_index=True)
     else:
         updated_history = result_df
     
     updated_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+
+def clean_brand_columns(df):
+    """브랜드 컬럼 정리: 쉼표가 포함된 브랜드 값을 분리"""
+    if '브랜드' not in df.columns:
+        return df
+    
+    cleaned_rows = []
+    for _, row in df.iterrows():
+        brand = row['브랜드']
+        if isinstance(brand, str) and ',' in brand:
+            # 쉼표로 구분된 브랜드들을 분리
+            brands = [b.strip() for b in brand.split(',')]
+            for single_brand in brands:
+                if single_brand in BRANDS:  # 유효한 브랜드인지 확인
+                    new_row = row.copy()
+                    new_row['브랜드'] = single_brand
+                    cleaned_rows.append(new_row)
+        else:
+            cleaned_rows.append(row)
+    
+    # cleaned_rows가 비어있으면 원본 DataFrame 반환
+    if cleaned_rows:
+        return pd.DataFrame(cleaned_rows)
+    else:
+        return df
 
 def execute_manual_assignment(selected_month, selected_season, brand, influencer_id, df):
     """수동 배정 실행"""
@@ -383,26 +508,70 @@ def execute_manual_assignment(selected_month, selected_season, brand, influencer
         influencer_name = df[df['id'] == influencer_id]['name'].iloc[0]
         assignment_history = load_assignment_history()
         
-        # 중복 배정 확인
+        # 중복 배정 확인 (같은 브랜드, 같은 월)
+        # 브랜드 필드에 쉼표가 포함된 경우도 체크
         existing_mask = (
             (assignment_history['ID'] == influencer_id) &
-            (assignment_history['배정월'] == selected_month)
+            (assignment_history['배정월'] == selected_month) &
+            (
+                (assignment_history['브랜드'] == brand) |
+                (assignment_history['브랜드'].str.contains(brand, na=False)) |
+                (assignment_history['브랜드'].str.contains(f"{brand},", na=False)) |
+                (assignment_history['브랜드'].str.contains(f", {brand}", na=False))
+            )
         )
         
         if not existing_mask.any():
+            # 배정 핵심 로직: 전월까지 집행완료 + 현재까지 배정을 고려한 잔여수 확인
+            influencer_data = df[df['id'] == influencer_id].iloc[0]
+            brand_qty_col = f"{brand.lower()}_qty"
+            brand_contract_qty = influencer_data.get(brand_qty_col, 0)
+            
+            # 1. 전월까지의 모든 집행완료 데이터 확인
+            execution_data = load_execution_data()
+            total_executed_count = 0
+            if not execution_data.empty:
+                # 해당 인플루언서의 해당 브랜드 모든 집행완료 수
+                exec_mask = (
+                    (execution_data['ID'] == influencer_id) &
+                    (execution_data['브랜드'] == brand)
+                )
+                if exec_mask.any():
+                    total_executed_count = execution_data.loc[exec_mask, '실제집행수'].sum()
+            
+            # 2. 현재까지의 모든 배정 수 확인
+            existing_assignments = assignment_history[
+                (assignment_history['ID'] == influencer_id) & 
+                (assignment_history['브랜드'] == brand)
+            ]
+            total_assigned_count = len(existing_assignments)
+            
+            # 3. 실제 잔여수 계산: 계약수 - (집행완료 + 배정)
+            actual_remaining = max(0, brand_contract_qty - total_executed_count - total_assigned_count)
+            
+            # 4. 잔여수가 없으면 배정 불가
+            if actual_remaining <= 0:
+                st.sidebar.error(f"❌ {influencer_name}의 {brand} 브랜드 잔여수가 없습니다. (계약수: {brand_contract_qty}, 집행완료: {total_executed_count}, 배정: {total_assigned_count})")
+                return
+            
             # 새로운 배정 추가
             new_assignment = create_manual_assignment_info(influencer_id, brand, selected_month, df)
             assignment_history = pd.concat([assignment_history, pd.DataFrame([new_assignment])], ignore_index=True)
             assignment_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
             
-            st.sidebar.success(f"✅ {influencer_name} 배정 추가됨!")
+            st.sidebar.success(f"✅ {influencer_name} ({brand}) 배정 추가됨!")
             
             if 'selected_id' in st.session_state:
                 st.session_state.selected_id = ""
             
+            # 사용자가 알림을 읽을 수 있도록 2초 대기
+            time.sleep(2)
             st.rerun()
         else:
-            st.sidebar.warning(f"⚠️ {influencer_name}의 {selected_month} 배정이 이미 존재합니다.")
+            # 기존 배정 정보 확인
+            existing_assignment = assignment_history[existing_mask].iloc[0]
+            existing_brand = existing_assignment['브랜드']
+            st.sidebar.warning(f"⚠️ {influencer_name}의 {selected_month} {existing_brand} 배정이 이미 존재합니다.")
     else:
         st.sidebar.error("❌ 올바른 인플루언서 ID를 입력해주세요.")
 
@@ -423,6 +592,8 @@ def create_manual_assignment_info(influencer_id, brand, selected_month, df):
         '이름': influencer_data['name'],
         '배정월': selected_month,
         'FLW': influencer_data['follower'],
+        '1회계약단가': influencer_data['unit_fee'],
+        '2차활용': influencer_data['sec_usage'],
         '브랜드_계약수': brand_contract_qty,
         '브랜드_실집행수': 0,
         '브랜드_잔여수': brand_contract_qty,
@@ -465,6 +636,9 @@ def render_sidebar(df):
     
     # 수동 배정
     render_manual_assignment_section(selected_month, selected_season, df)
+    
+    # 선택된 월을 session_state에 저장
+    st.session_state.selected_month = selected_month
     
     return selected_month, selected_season, month_options
 
@@ -525,23 +699,58 @@ def render_id_suggestions(manual_assignment_id, df):
 def render_selected_id_info():
     """선택된 ID 정보 렌더링"""
     if 'selected_id' in st.session_state and st.session_state.selected_id:
-        info_container = st.sidebar.container()
-        with info_container:
-            col1, col2 = st.columns([20, 1])
-            with col1:
-                st.sidebar.success(f"✅ {st.session_state.selected_id} 선택됨!")
-            with col2:
-                if st.sidebar.button("✕", key="close_selected_id_info", help="닫기"):
-                    st.session_state.selected_id = ""
-                    st.rerun()
+        selected_id = st.session_state.selected_id
+        
+        # 인플루언서 상세 정보 가져오기
+        influencer_info = get_influencer_info(selected_id)
+        
+        if influencer_info is not None:
+            info_container = st.sidebar.container()
+            with info_container:
+                # 선택 확인 메시지
+                col1, col2 = st.columns([20, 1])
+                with col1:
+                    st.sidebar.success(f"✅ {selected_id} 선택됨!")
+                with col2:
+                    if st.sidebar.button("✕", key="close_selected_id_info", help="닫기"):
+                        st.session_state.selected_id = ""
+                        st.rerun()
+                
+                # 인플루언서 상세 정보 표시
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("**👤 인플루언서 정보:**")
+                
+                # 정보를 컬럼으로 표시
+                col1, col2 = st.sidebar.columns(2)
+                with col1:
+                    st.sidebar.markdown(f"**이름:** {influencer_info['name']}")
+                    st.sidebar.markdown(f"**팔로워:** {influencer_info['follower']:,}")
+                with col2:
+                    st.sidebar.markdown(f"**1회단가:** {influencer_info['unit_fee']:,}원")
+                    st.sidebar.markdown(f"**소속사:** {influencer_info['agency'] or '개인'}")
+                
+                # 브랜드별 계약 수량 정보
+                st.sidebar.markdown("**📊 브랜드별 계약:**")
+                brand_cols = st.sidebar.columns(4)
+                brands = ['MLB', 'DX', 'DV', 'ST']
+                for i, brand in enumerate(brands):
+                    qty_col = f"{brand.lower()}_qty"
+                    if qty_col in influencer_info:
+                        with brand_cols[i]:
+                            st.sidebar.markdown(f"**{brand}:** {influencer_info[qty_col]}")
+                    else:
+                        with brand_cols[i]:
+                            st.sidebar.markdown(f"**{brand}:** 0")
+        else:
+            st.sidebar.error(f"❌ {selected_id} 정보를 찾을 수 없습니다.")
 
 def render_assignment_results_tab(month_options, df):
     """배정 및 집행결과 탭 렌더링"""
     st.subheader("📊 배정 및 집행결과")
     
     # 필터
-    selected_month_filter = st.selectbox("📅 월별 필터", month_options, index=0, key="tab1_month_filter")
-    selected_brand_filter = st.selectbox("🏷️ 브랜드 필터", BRAND_OPTIONS, index=0, key="tab1_brand_filter")
+    selected_month_filter = st.selectbox("📅 배정월", month_options, index=0, key="tab1_month_filter")
+    selected_brand_filter = st.selectbox("🏷️ 브랜드", BRAND_OPTIONS, index=0, key="tab1_brand_filter")
     
     # 배정 결과 로드 및 표시
     if os.path.exists(ASSIGNMENT_FILE):
@@ -550,6 +759,8 @@ def render_assignment_results_tab(month_options, df):
         if not assignment_history.empty:
             # 실행 데이터 추가
             all_results = add_execution_data(assignment_history, EXECUTION_FILE)
+            
+
             
             # 필터 적용
             all_results = all_results[all_results["배정월"] == selected_month_filter]
@@ -577,6 +788,10 @@ def render_assignment_table(all_results, df):
     """배정 테이블 렌더링"""
     # 체크박스, 넘버, 결과 상태 추가
     all_results_with_checkbox = prepare_assignment_data(all_results)
+    
+    # 배정 개수 정보 표시
+    assignment_count = len(all_results_with_checkbox)
+    st.markdown(f"📊 배정 개수: **{assignment_count}개**")
     
     # 전체 선택/해제 버튼과 다운로드 버튼
     render_table_controls(all_results_with_checkbox)
@@ -611,9 +826,29 @@ def prepare_assignment_data(all_results):
     # 집행URL 컬럼 추가 및 기존 데이터 로드
     add_execution_url_column(all_results_with_checkbox)
     
-    # 컬럼 순서 재정렬
-    cols = ['선택', '번호', '배정월', '브랜드', 'ID', '이름', 'FLW', '결과', '집행URL'] + [col for col in all_results_with_checkbox.columns if col not in ['선택', '번호', '배정월', '브랜드', 'ID', '이름', 'FLW', '결과', '집행URL']]
-    all_results_with_checkbox = all_results_with_checkbox[cols]
+    # 화면 표시용으로 브랜드_실집행수, 전체_계약수, 전체_잔여수 컬럼 제거 (브랜드_잔여수는 유지)
+    columns_to_remove = ['브랜드_실집행수', '전체_계약수', '전체_잔여수']
+    for col in columns_to_remove:
+        if col in all_results_with_checkbox.columns:
+            all_results_with_checkbox = all_results_with_checkbox.drop(col, axis=1)
+    
+    # 항상 influencer.csv에서 기본 정보 가져오기 (배정 이력과 관계없이)
+    influencer_data = pd.read_csv(INFLUENCER_FILE, encoding="utf-8")
+    
+    # 1회계약단가와 2차활용은 항상 influencer.csv에서 가져옴
+    unit_fee_mapping = dict(zip(influencer_data['id'], influencer_data['unit_fee']))
+    sec_usage_mapping = dict(zip(influencer_data['id'], influencer_data['sec_usage']))
+    
+    all_results_with_checkbox['1회계약단가'] = all_results_with_checkbox['ID'].map(unit_fee_mapping).fillna(0)
+    all_results_with_checkbox['2차활용'] = all_results_with_checkbox['ID'].map(sec_usage_mapping).fillna('X')
+    
+    # 컬럼 순서 재정렬 (브랜드_잔여수를 브랜드_계약수 다음에, 결과를 맨 오른쪽에 배치)
+    cols = ['선택', '번호', '배정월', '브랜드', 'ID', '이름', 'FLW', '1회계약단가', '2차활용', '브랜드_계약수', '브랜드_잔여수', '집행URL', '결과']
+    # 존재하는 컬럼만 필터링
+    existing_cols = [col for col in cols if col in all_results_with_checkbox.columns]
+    # 나머지 컬럼들 추가
+    remaining_cols = [col for col in all_results_with_checkbox.columns if col not in existing_cols]
+    all_results_with_checkbox = all_results_with_checkbox[existing_cols + remaining_cols]
     
     return all_results_with_checkbox
 
@@ -633,13 +868,19 @@ def update_execution_status(all_results_with_checkbox):
 
 def process_numeric_columns(all_results_with_checkbox):
     """숫자 컬럼 처리"""
-    numeric_columns = ['브랜드_계약수', '브랜드_실집행수', '브랜드_잔여수', '전체_계약수', '전체_실집행수', '전체_잔여수']
+    numeric_columns = ['브랜드_계약수']
     for col in numeric_columns:
         if col in all_results_with_checkbox.columns:
             all_results_with_checkbox[col] = all_results_with_checkbox[col].fillna(0).astype(int).astype(str)
     
     if 'FLW' in all_results_with_checkbox.columns:
         all_results_with_checkbox['FLW'] = all_results_with_checkbox['FLW'].fillna(0).astype(int)
+    
+    if '1회계약단가' in all_results_with_checkbox.columns:
+        all_results_with_checkbox['1회계약단가'] = all_results_with_checkbox['1회계약단가'].fillna(0).astype(int)
+    
+    if '브랜드_잔여수' in all_results_with_checkbox.columns:
+        all_results_with_checkbox['브랜드_잔여수'] = all_results_with_checkbox['브랜드_잔여수'].fillna(0).astype(int)
 
 def add_execution_url_column(all_results_with_checkbox):
     """집행URL 컬럼 추가"""
@@ -661,10 +902,15 @@ def add_execution_url_column(all_results_with_checkbox):
 
 def render_table_controls(all_results_with_checkbox):
     """테이블 컨트롤 렌더링"""
-    col1, col2 = st.columns([1, 4])
+    # 하단 버튼들과 정확히 같은 너비로 배치
+    col1, col2, col3, col_spacer, col4 = st.columns([0.15, 0.15, 0.15, 0.1, 0.45])
     
     with col1:
-        if st.button("☑️ 전체선택", type="secondary", use_container_width=True):
+        # 전체 선택 상태에 따라 버튼 텍스트 변경 (이미지 요청에 따라 체크 아이콘 사용)
+        select_all_state = st.session_state.get('select_all', False)
+        button_text = "✅ 전체선택" if not select_all_state else "✅ 전체해제"
+        
+        if st.button(button_text, type="secondary", use_container_width=True, key="select_all_button"):
             if 'select_all' not in st.session_state:
                 st.session_state.select_all = True
             else:
@@ -673,10 +919,17 @@ def render_table_controls(all_results_with_checkbox):
     
     with col2:
         render_download_button(all_results_with_checkbox)
+    
+    with col3:
+        pass  # 빈 공간
+    
+    with col4:
+        pass  # 빈 공간
 
 def render_download_button(all_results_with_checkbox):
     """다운로드 버튼 렌더링"""
-    available_columns = ['브랜드', 'ID', '이름', '배정월', 'FLW', '결과', '집행URL', '브랜드_계약수', '브랜드_실집행수', '브랜드_잔여수', '전체_계약수', '전체_잔여수']
+    # 브랜드_계약수, 실집행수, 전체_계약수, 전체_잔여수 컬럼들을 제외하고 다운로드 (브랜드_잔여수는 포함)
+    available_columns = ['브랜드', 'ID', '이름', '배정월', 'FLW', '1회계약단가', '2차활용', '브랜드_잔여수', '결과', '집행URL']
     existing_columns = [col for col in available_columns if col in all_results_with_checkbox.columns]
     download_data = all_results_with_checkbox[existing_columns].copy()
     
@@ -689,14 +942,19 @@ def render_download_button(all_results_with_checkbox):
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"assignment_results_{current_time}.xlsx"
     st.download_button(
-        "📥 배정 및 집행결과 엑셀 다운로드",
+        "📥 엑셀 다운로드",
         to_excel_bytes(download_data),
         file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="excel_download_button"
     )
 
 def render_data_editor(all_results_with_checkbox):
     """데이터 에디터 렌더링"""
+    # 전체 선택 상태에 따라 체크박스 기본값 설정
+    default_checked = st.session_state.get('select_all', False)
+    
     return st.data_editor(
         all_results_with_checkbox,
         use_container_width=True,
@@ -706,7 +964,7 @@ def render_data_editor(all_results_with_checkbox):
             "선택": st.column_config.CheckboxColumn(
                 "선택",
                 help="실집행완료할 배정을 선택하세요",
-                default=False,
+                default=default_checked,
                 width=10
             ),
             "번호": st.column_config.NumberColumn(
@@ -756,36 +1014,31 @@ def render_data_editor(all_results_with_checkbox):
                 format="%d",
                 step=1
             ),
+            "1회계약단가": st.column_config.NumberColumn(
+                "1회계약단가",
+                help="1회 계약 단가 (총액/전체계약수)",
+                format="%d",
+                step=1
+            ),
+            "2차활용": st.column_config.SelectboxColumn(
+                "2차활용",
+                help="2차활용 여부",
+                options=["O", "X"],
+                required=True
+            ),
             "브랜드_계약수": st.column_config.TextColumn(
                 "브랜드_계약수",
                 help="브랜드별 계약 수",
                 max_chars=None
             ),
-            "브랜드_실집행수": st.column_config.TextColumn(
-                "브랜드_실집행수",
-                help="브랜드별 실제 집행 수",
-                max_chars=None
-            ),
-            "브랜드_잔여수": st.column_config.TextColumn(
+            "브랜드_잔여수": st.column_config.NumberColumn(
                 "브랜드_잔여수",
-                help="브랜드별 잔여 수",
-                max_chars=None
+                help="브랜드별 잔여 수 (계약수 - 실집행수)",
+                format="%d",
+                step=1
             ),
-            "전체_계약수": st.column_config.TextColumn(
-                "전체_계약수",
-                help="전체 계약 수",
-                max_chars=None
-            ),
-            "전체_실집행수": st.column_config.TextColumn(
-                "전체_실집행수",
-                help="전체 실제 집행 수",
-                max_chars=None
-            ),
-            "전체_잔여수": st.column_config.TextColumn(
-                "전체_잔여수",
-                help="전체 잔여 수",
-                max_chars=None
-            )
+
+
         }
     )
 
@@ -843,6 +1096,7 @@ def handle_result_changes(edited_df, all_results_with_checkbox):
     
     if changed_to_executed:
         update_execution_data(changed_to_executed, add=True)
+        # 배정 데이터는 유지 (삭제하지 않음)
         create_success_container(f"✅ {len(changed_to_executed)}개의 배정이 실집행완료로 처리되었습니다!", "result_success")
         st.rerun()
     
@@ -886,19 +1140,22 @@ def update_execution_data(changes, add=True):
         )
         
         if add:
+            # 집행완료로 변경: 실행 데이터에 추가 또는 업데이트
             if existing_mask.any():
                 execution_data.loc[existing_mask, '실제집행수'] = 1
             else:
                 new_row = {**change, '실제집행수': 1}
                 execution_data = pd.concat([execution_data, pd.DataFrame([new_row])], ignore_index=True)
         else:
+            # 배정완료로 되돌리기: 실행 데이터에서만 제거 (배정 데이터는 유지)
             execution_data = execution_data[~existing_mask]
     
     execution_data.to_csv(EXECUTION_FILE, index=False, encoding="utf-8")
 
 def render_assignment_buttons(edited_df, df):
     """배정 버튼들 렌더링"""
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+    # 버튼 너비를 줄이기 위해 컬럼 비율 조정
+    col1, col2, col3, col_spacer, col4 = st.columns([0.15, 0.15, 0.15, 0.1, 0.45])
     
     with col1:
         render_execution_complete_button(edited_df)
@@ -908,6 +1165,9 @@ def render_assignment_buttons(edited_df, df):
     
     with col3:
         render_reset_assignment_button(df)
+    
+    with col4:
+        pass  # 빈 공간
 
 def render_execution_complete_button(edited_df):
     """집행완료 버튼 렌더링"""
@@ -951,53 +1211,163 @@ def render_delete_assignment_button(edited_df, df):
             if deletable_rows:
                 delete_assignments(deletable_rows)
                 st.success(f"✅ {len(deletable_rows)}개의 배정이 삭제되었습니다!")
+                # 사용자가 알림을 읽을 수 있도록 2초 대기
+                time.sleep(2)
                 st.rerun()
         else:
             st.warning("⚠️ 삭제할 배정을 선택해주세요.")
 
 def render_reset_assignment_button(df):
     """배정초기화 버튼 렌더링"""
+    # 초기화 상태 확인
+    if 'reset_verification_done' not in st.session_state:
+        st.session_state.reset_verification_done = False
+    if 'reset_confirmation_shown' not in st.session_state:
+        st.session_state.reset_confirmation_shown = False
+    
     if st.button("🗑️ 배정초기화", type="secondary", use_container_width=True):
-        execution_completed_assignments = get_execution_completed_assignments()
+        st.session_state.reset_verification_done = True
+        st.session_state.reset_confirmation_shown = False
+        st.rerun()
+    
+    # 검증 결과 표시
+    if st.session_state.reset_verification_done:
+        # 현재 표시된 배정 데이터 가져오기
+        current_month_filter = st.session_state.get('tab1_month_filter', '')
+        current_brand_filter = st.session_state.get('tab1_brand_filter', '')
         
-        if execution_completed_assignments:
-            create_warning_container("집행완료 상태의 배정이 있어 초기화할 수 없습니다. 집행완료를 배정완료로 변경한 후 다시 시도해주세요.", "close_init_warning")
-        else:
+        # execution_status.csv에서 해당 월의 집행완료 데이터 확인
+        has_execution_completed = False
+        
+        if os.path.exists(EXECUTION_FILE):
+            execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
+            
+            if not execution_data.empty and '배정월' in execution_data.columns and '실제집행수' in execution_data.columns:
+                # 실제집행수가 0보다 큰 데이터만 필터링
+                completed_data = execution_data[execution_data['실제집행수'] > 0]
+                
+                if current_month_filter:
+                    # 해당 월의 집행완료 데이터만 확인
+                    month_completed = completed_data[completed_data['배정월'] == current_month_filter]
+                    has_execution_completed = len(month_completed) > 0
+                else:
+                    # 전체 집행완료 데이터 확인
+                    has_execution_completed = len(completed_data) > 0
+        
+        if has_execution_completed and not st.session_state.reset_confirmation_shown:
+            # 경고 메시지와 함께 진행 옵션 제공
+            st.warning("⚠️ 집행완료 상태의 배정이 있어 초기화할 수 없습니다. 집행완료를 배정완료로 변경한 후 다시 시도해주세요.")
+            st.info("💡 그래도 배정 초기화를 진행하시겠습니까?")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("❌ 취소", key="cancel_reset", use_container_width=True):
+                    st.session_state.reset_verification_done = False
+                    st.session_state.reset_confirmation_shown = False
+                    st.rerun()
+            with col2:
+                if st.button("✅ 예, 진행합니다", key="proceed_reset", use_container_width=True):
+                    st.session_state.reset_confirmation_shown = True
+                    # 전체 선택 상태 초기화
+                    if 'select_all' in st.session_state:
+                        st.session_state.select_all = False
+                    
+                    # 초기화 실행
+                    reset_assignments()
+                    
+                    # 성공 메시지 표시
+                    st.success("✅ 초기화가 완료되었습니다!")
+                    
+                    # 사용자가 알림을 읽을 수 있도록 2초 대기
+                    time.sleep(2)
+                    
+                    # 상태 초기화
+                    st.session_state.reset_verification_done = False
+                    st.session_state.reset_confirmation_shown = False
+                    st.rerun()
+        elif not has_execution_completed:
+            # 전체 선택 상태 초기화
+            if 'select_all' in st.session_state:
+                st.session_state.select_all = False
+            
             reset_assignments()
-            create_success_container("✅ 초기화가 완료되었습니다!", "close_init_success")
+            st.success("✅ 초기화가 완료되었습니다!")
+            
+            # 사용자가 알림을 읽을 수 있도록 2초 대기
+            time.sleep(2)
+            
+            # 상태 초기화
+            st.session_state.reset_verification_done = False
+            st.session_state.reset_confirmation_shown = False
             st.rerun()
 
 def is_execution_completed(row):
     """집행완료 상태인지 확인"""
     if os.path.exists(EXECUTION_FILE):
         execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
-        if not execution_data.empty:
-            exec_mask = (
-                (execution_data['ID'] == row['ID']) &
-                (execution_data['브랜드'] == row['브랜드']) &
-                (execution_data['배정월'] == row['배정월'])
-            )
-            return exec_mask.any() and execution_data.loc[exec_mask, '실제집행수'].iloc[0] > 0
+        # execution_data가 비어있거나 필요한 컬럼이 없으면 False 반환
+        if execution_data.empty or 'ID' not in execution_data.columns or '실제집행수' not in execution_data.columns:
+            return False
+        
+        exec_mask = (
+            (execution_data['ID'] == row['ID']) &
+            (execution_data['브랜드'] == row['브랜드']) &
+            (execution_data['배정월'] == row['배정월'])
+        )
+        return exec_mask.any() and execution_data.loc[exec_mask, '실제집행수'].iloc[0] > 0
     return False
 
-def get_execution_completed_assignments():
-    """집행완료된 배정 목록 가져오기"""
-    execution_completed_assignments = []
-    assignment_history = load_assignment_history()
-    
-    if os.path.exists(EXECUTION_FILE):
+def get_execution_completed_assignments_for_month(selected_month):
+    """특정 월의 집행완료된 배정 목록 가져오기"""
+    try:
+        execution_completed_assignments = []
+        
+        print(f"DEBUG: 함수 호출 - 선택된 월: {selected_month}")
+        
+        # execution_data 파일 확인
+        if not os.path.exists(EXECUTION_FILE):
+            print(f"DEBUG: execution_status.csv 파일이 존재하지 않음")
+            return execution_completed_assignments
+        
         execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
-        if not execution_data.empty:
-            for _, row in assignment_history.iterrows():
-                exec_mask = (
-                    (execution_data['ID'] == row['ID']) &
-                    (execution_data['브랜드'] == row['브랜드']) &
-                    (execution_data['배정월'] == row['배정월'])
-                )
-                if exec_mask.any() and execution_data.loc[exec_mask, '실제집행수'].iloc[0] > 0:
-                    execution_completed_assignments.append(f"{row['이름']} ({row['브랜드']})")
-    
-    return execution_completed_assignments
+        print(f"DEBUG: execution_data 로드 완료 - 행 수: {len(execution_data)}")
+        
+        # execution_data가 비어있거나 필요한 컬럼이 없으면 빈 리스트 반환
+        if execution_data.empty:
+            print(f"DEBUG: execution_data가 비어있음")
+            return execution_completed_assignments
+            
+        if 'ID' not in execution_data.columns or '실제집행수' not in execution_data.columns or '배정월' not in execution_data.columns:
+            print(f"DEBUG: 필요한 컬럼이 없음 - 컬럼: {list(execution_data.columns)}")
+            return execution_completed_assignments
+        
+        # 전체 집행완료 데이터 확인
+        all_completed = execution_data[execution_data['실제집행수'] > 0]
+        print(f"DEBUG: 전체 집행완료 데이터: {len(all_completed)}개")
+        print(f"DEBUG: 전체 집행완료 데이터의 월: {all_completed['배정월'].unique()}")
+        
+        # 선택된 월의 집행완료 데이터만 필터링
+        if selected_month:
+            # 해당 월의 실제집행수가 0보다 큰 데이터만 선택
+            month_executions = execution_data[
+                (execution_data['배정월'] == selected_month) & 
+                (execution_data['실제집행수'] > 0)
+            ]
+            print(f"DEBUG: {selected_month} 집행완료 데이터: {len(month_executions)}개")
+        else:
+            # 전체 월의 실제집행수가 0보다 큰 데이터만 선택
+            month_executions = execution_data[execution_data['실제집행수'] > 0]
+        
+        # 집행완료된 배정 목록 생성
+        for _, row in month_executions.iterrows():
+            execution_completed_assignments.append(f"{row['이름']} ({row['브랜드']})")
+        
+        print(f"DEBUG: 최종 집행완료 배정 수: {len(execution_completed_assignments)}")
+        return execution_completed_assignments
+        
+    except Exception as e:
+        print(f"ERROR in get_execution_completed_assignments_for_month: {e}")
+        return []
 
 def delete_assignments(deletable_rows):
     """배정 삭제"""
@@ -1018,10 +1388,29 @@ def delete_assignments(deletable_rows):
 
 def reset_assignments():
     """배정 초기화"""
-    if os.path.exists(ASSIGNMENT_FILE):
-        os.remove(ASSIGNMENT_FILE)
-    if os.path.exists(EXECUTION_FILE):
-        os.remove(EXECUTION_FILE)
+    # 현재 선택된 월을 정확히 가져오기
+    current_month = st.session_state.get('tab1_month_filter', '')
+    
+    if current_month:
+        # 선택된 월의 배정만 삭제
+        assignment_history = load_assignment_history()
+        if not assignment_history.empty:
+            # 해당 월의 배정 제거
+            assignment_history = assignment_history[assignment_history['배정월'] != current_month]
+            assignment_history.to_csv(ASSIGNMENT_FILE, index=False, encoding="utf-8")
+        
+        # 선택된 월의 집행 데이터만 삭제
+        if os.path.exists(EXECUTION_FILE):
+            execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
+            if not execution_data.empty:
+                execution_data = execution_data[execution_data['배정월'] != current_month]
+                execution_data.to_csv(EXECUTION_FILE, index=False, encoding="utf-8")
+    else:
+        # 월이 선택되지 않은 경우 전체 초기화
+        if os.path.exists(ASSIGNMENT_FILE):
+            os.remove(ASSIGNMENT_FILE)
+        if os.path.exists(EXECUTION_FILE):
+            os.remove(EXECUTION_FILE)
 
 def render_excel_upload_section(df):
     """엑셀 업로드 섹션 렌더링"""
@@ -1046,7 +1435,8 @@ def handle_excel_upload(uploaded_file, df):
         else:
             uploaded_data = pd.read_excel(uploaded_file, engine='xlrd')
         
-        required_columns = ['브랜드', 'ID', '이름', '배정월', 'FLW', '브랜드_계약수', '브랜드_실집행수', '브랜드_잔여수', '전체_계약수', '전체_실집행수', '전체_잔여수', '집행URL']
+        # 필수 컬럼만 검증 (브랜드_계약수, 실집행수, 잔여수는 선택사항)
+        required_columns = ['브랜드', 'ID', '이름', '배정월', '집행URL']
         missing_columns = [col for col in required_columns if col not in uploaded_data.columns]
         
         if missing_columns:
@@ -1059,21 +1449,27 @@ def handle_excel_upload(uploaded_file, df):
 
 def process_uploaded_data(uploaded_data, df):
     """업로드된 데이터 처리"""
-    uploaded_data = uploaded_data[required_columns].copy()
+    # 업로드 시에는 모든 컬럼을 허용하되, 필수 컬럼만 사용
+    required_columns = ['브랜드', 'ID', '이름', '배정월', '집행URL']
+    available_columns = [col for col in required_columns if col in uploaded_data.columns]
+    uploaded_data = uploaded_data[available_columns].copy()
     
     # 배정 이력 업데이트
     assignment_update_data = uploaded_data[['브랜드', 'ID', '이름', '배정월', '집행URL']].copy()
-    update_assignment_history(assignment_update_data)
+    update_assignment_history(assignment_update_data, df)
     
-    # 실집행수 데이터 업데이트
-    execution_update_data = uploaded_data[uploaded_data['브랜드_실집행수'] > 0][['ID', '브랜드', '배정월', '브랜드_실집행수']].copy()
-    execution_update_data = execution_update_data.rename(columns={'브랜드_실집행수': '실제집행수'})
-    execution_update_data = execution_update_data.merge(
-        df[['id', 'name']].rename(columns={'id': 'ID', 'name': '이름'}),
-        on='ID',
-        how='left'
-    )
-    update_execution_history(execution_update_data)
+    # 실집행수 데이터 업데이트 (브랜드_실집행수 컬럼이 있는 경우에만)
+    if '브랜드_실집행수' in uploaded_data.columns:
+        execution_update_data = uploaded_data[uploaded_data['브랜드_실집행수'] > 0][['ID', '브랜드', '배정월', '브랜드_실집행수']].copy()
+        execution_update_data = execution_update_data.rename(columns={'브랜드_실집행수': '실제집행수'})
+        execution_update_data = execution_update_data.merge(
+            df[['id', 'name']].rename(columns={'id': 'ID', 'name': '이름'}),
+            on='ID',
+            how='left'
+        )
+        update_execution_history(execution_update_data)
+    else:
+        execution_update_data = pd.DataFrame()
     
     st.success(f"✅ {len(assignment_update_data)}개의 배정 데이터와 {len(execution_update_data)}개의 실집행수 데이터가 업로드되었습니다!")
     
@@ -1087,7 +1483,7 @@ def process_uploaded_data(uploaded_data, df):
     
     st.rerun()
 
-def update_assignment_history(assignment_update_data):
+def update_assignment_history(assignment_update_data, df=None):
     """배정 이력 업데이트"""
     if os.path.exists(ASSIGNMENT_FILE):
         existing_assignment_data = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
@@ -1095,6 +1491,36 @@ def update_assignment_history(assignment_update_data):
             existing_assignment_data['집행URL'] = ""
     else:
         existing_assignment_data = pd.DataFrame(columns=["브랜드", "ID", "이름", "배정월", "집행URL"])
+    
+    # ID만 입력된 경우 자동으로 이름, 팔로워, 계약수 등의 정보 채우기
+    if df is not None:
+        for idx, row in assignment_update_data.iterrows():
+            if pd.isna(row['이름']) or row['이름'] == "":
+                # ID로 인플루언서 정보 찾기
+                influencer_info = df[df['id'] == row['ID']]
+                if not influencer_info.empty:
+                    assignment_update_data.loc[idx, '이름'] = influencer_info.iloc[0]['name']
+                    # FLW 컬럼이 없으면 추가
+                    if 'FLW' not in assignment_update_data.columns:
+                        assignment_update_data['FLW'] = ""
+                    assignment_update_data.loc[idx, 'FLW'] = influencer_info.iloc[0]['follower']
+                    
+                    # 브랜드별 계약수 추가
+                    brand_qty_col = f"{row['브랜드'].lower()}_qty"
+                    if brand_qty_col in df.columns:
+                        if '브랜드_계약수' not in assignment_update_data.columns:
+                            assignment_update_data['브랜드_계약수'] = ""
+                        assignment_update_data.loc[idx, '브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
+                    
+                    # 1회계약단가 추가
+                    if '1회계약단가' not in assignment_update_data.columns:
+                        assignment_update_data['1회계약단가'] = ""
+                    assignment_update_data.loc[idx, '1회계약단가'] = influencer_info.iloc[0]['unit_fee']
+                    
+                    # 2차활용 추가
+                    if '2차활용' not in assignment_update_data.columns:
+                        assignment_update_data['2차활용'] = ""
+                    assignment_update_data.loc[idx, '2차활용'] = influencer_info.iloc[0]['sec_usage']
     
     combined_assignment_data = pd.concat([existing_assignment_data, assignment_update_data], ignore_index=True)
     combined_assignment_data = combined_assignment_data.drop_duplicates(subset=['ID', '브랜드', '배정월'], keep='last')
@@ -1115,24 +1541,41 @@ def render_influencer_tab(df):
     """인플루언서별 탭 렌더링"""
     st.subheader("👥 인플루언서별 배정 현황")
     
-    # 브랜드 필터
-    selected_brand_filter = st.selectbox("🏷️ 브랜드 필터", BRAND_OPTIONS, index=0, key="tab2_brand_filter")
+    # 필터 섹션을 컨테이너로 감싸서 일관된 공간 확보
+    with st.container():
+        # 시즌 필터 - contract_sesn 데이터에서 시즌 추출
+        season_options = get_season_options(df)
+        selected_season_filter = st.selectbox("🏆 시즌", season_options, index=0, key="tab2_season_filter")
+        
+        # 브랜드 필터
+        selected_brand_filter = st.selectbox("🏷️ 브랜드", BRAND_OPTIONS, index=0, key="tab2_brand_filter")
     
-    # 인플루언서 요약 데이터 준비
-    influencer_summary = prepare_influencer_summary(df, selected_brand_filter)
-    
-    if not influencer_summary.empty:
-        render_influencer_table(influencer_summary, selected_brand_filter)
-    else:
-        st.info("인플루언서 데이터가 없습니다.")
+    # 테이블 섹션을 컨테이너로 감싸서 일관된 공간 확보
+    with st.container():
+        # 인플루언서 요약 데이터 준비
+        influencer_summary = prepare_influencer_summary(df, selected_brand_filter, selected_season_filter)
+        
+        if not influencer_summary.empty:
+            render_influencer_table(influencer_summary, selected_brand_filter, influencer_count=len(influencer_summary))
+        else:
+            st.info("인플루언서 데이터가 없습니다.")
 
-def prepare_influencer_summary(df, selected_brand_filter):
+def prepare_influencer_summary(df, selected_brand_filter, selected_season_filter):
     """인플루언서 요약 데이터 준비"""
-    influencer_summary = df[["id", "name", "follower", "unit_fee"]].copy()
+    influencer_summary = df[["id", "name", "follower", "unit_fee", "sec_usage"]].copy()
     
     # 전체 계약수 계산
     qty_cols = [f"{brand.lower()}_qty" for brand in BRANDS]
     influencer_summary["전체_계약수"] = df.loc[influencer_summary.index, qty_cols].sum(axis=1)
+    
+    # 시즌 필터 적용
+    # 배정월 필터와 동일한 시즌 로직 적용
+    if selected_season_filter == "25FW":
+        # 25FW 시즌 (9월~12월, 1월~2월) 데이터만 필터링
+        influencer_summary = filter_by_season(influencer_summary, df, ["9월", "10월", "11월", "12월", "1월", "2월"])
+    elif selected_season_filter == "26SS":
+        # 26SS 시즌 (3월~8월) 데이터만 필터링
+        influencer_summary = filter_by_season(influencer_summary, df, ["3월", "4월", "5월", "6월", "7월", "8월"])
     
     # 브랜드 필터 적용
     if selected_brand_filter != "전체":
@@ -1140,12 +1583,10 @@ def prepare_influencer_summary(df, selected_brand_filter):
         if qty_col in df.columns:
             brand_filter_mask = df[qty_col] > 0
             influencer_summary = influencer_summary[brand_filter_mask]
+    # 브랜드 필터가 "전체"일 때는 모든 인플루언서 표시 (필터링하지 않음)
     
     # 브랜드별 상세 정보 추가
     add_brand_details(influencer_summary, df, selected_brand_filter)
-    
-    # 월별 컬럼 추가
-    add_monthly_columns(influencer_summary, df)
     
     # 번호 컬럼 추가
     influencer_summary = influencer_summary.reset_index(drop=True)
@@ -1153,8 +1594,25 @@ def prepare_influencer_summary(df, selected_brand_filter):
     
     # 컬럼명 변경
     influencer_summary = influencer_summary.rename(columns={
-        "id": "ID", "name": "이름", "follower": "FLW", "unit_fee": "1회계약단가"
+        "id": "ID", "name": "이름", "follower": "FLW", "unit_fee": "1회계약단가", "sec_usage": "2차활용"
     })
+    
+    # 전체 필터에서도 전체_계약수 컬럼 유지 (2차활용 오른쪽에 위치)
+    # 전체_계약수 컬럼을 2차활용 다음 위치로 이동
+    if "전체_계약수" in influencer_summary.columns:
+        # 2차활용 컬럼 다음 위치에 전체_계약수 이동
+        cols = list(influencer_summary.columns)
+        if "2차활용" in cols and "전체_계약수" in cols:
+            # 2차활용 위치 찾기
+            sec_usage_idx = cols.index("2차활용")
+            # 전체_계약수 제거
+            cols.remove("전체_계약수")
+            # 2차활용 다음 위치에 삽입
+            cols.insert(sec_usage_idx + 1, "전체_계약수")
+            influencer_summary = influencer_summary[cols]
+    
+    # 월별 컬럼 추가 (마지막에 실행)
+    add_monthly_columns(influencer_summary, df, selected_brand_filter)
     
     return influencer_summary
 
@@ -1169,80 +1627,79 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
         else:
             influencer_summary[f"{selected_brand}_계약수"] = 0
         
-        # 실집행수 추가
-        if os.path.exists(EXECUTION_FILE):
-            execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
-            if not execution_data.empty:
-                brand_exec_counts = execution_data[execution_data["브랜드"] == selected_brand].groupby("ID")["실제집행수"].sum()
-                influencer_summary[f"{selected_brand}_실집행수"] = influencer_summary["id"].map(brand_exec_counts).fillna(0).astype(int)
-            else:
-                influencer_summary[f"{selected_brand}_실집행수"] = 0
-        else:
-            influencer_summary[f"{selected_brand}_실집행수"] = 0
-        
-        # 잔여횟수 계산
-        max_qty = influencer_summary[f"{selected_brand}_계약수"]
-        influencer_summary[f"{selected_brand}_잔여횟수"] = max_qty - influencer_summary[f"{selected_brand}_실집행수"]
-        influencer_summary[f"{selected_brand}_잔여횟수"] = influencer_summary[f"{selected_brand}_잔여횟수"].clip(lower=0)
-    else:
-        # 전체 선택 시 모든 브랜드 잔여횟수 표시
+        # 브랜드 필터에서도 모든 브랜드 계약수 표시 (전체 필터와 동일한 컬럼 수)
         for brand in BRANDS:
             qty_col = f"{brand.lower()}_qty"
             if qty_col in df.columns:
-                max_qty = df.loc[influencer_summary.index, qty_col]
+                influencer_summary[f"{brand}_계약수"] = df.loc[influencer_summary.index, qty_col]
             else:
-                max_qty = pd.Series(0, index=influencer_summary.index)
-            
-            if os.path.exists(EXECUTION_FILE):
-                execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
-                if not execution_data.empty:
-                    brand_exec_counts = execution_data[execution_data["브랜드"] == brand].groupby("ID")["실제집행수"].sum()
-                    influencer_summary[f"잔여횟수_{brand}"] = influencer_summary.apply(
-                        lambda row: max(0, max_qty.get(row.name, 0) - brand_exec_counts.get(row["id"], 0)), axis=1
-                    )
-                else:
-                    influencer_summary[f"잔여횟수_{brand}"] = max_qty
+                influencer_summary[f"{brand}_계약수"] = 0
+    else:
+        # 전체 선택 시 모든 브랜드 계약수 표시
+        for brand in BRANDS:
+            qty_col = f"{brand.lower()}_qty"
+            if qty_col in df.columns:
+                influencer_summary[f"{brand}_계약수"] = df.loc[influencer_summary.index, qty_col]
             else:
-                influencer_summary[f"잔여횟수_{brand}"] = max_qty
+                influencer_summary[f"{brand}_계약수"] = 0
 
-def add_monthly_columns(influencer_summary, df):
+def filter_by_season(influencer_summary, df, target_months):
+    """시즌별 필터링"""
+    # 25FW 시즌의 경우, 25FW 계약이 있는 인플루언서만 필터링
+    if target_months == ["9월", "10월", "11월", "12월", "1월", "2월"]:  # 25FW
+        # contract_sesn이 25FW인 인플루언서만 필터링
+        season_filter_mask = df['contract_sesn'] == '25FW'
+        season_influencer_ids = df[season_filter_mask]['id'].unique()
+        filtered_summary = influencer_summary[influencer_summary['id'].isin(season_influencer_ids)]
+        return filtered_summary
+    elif target_months == ["3월", "4월", "5월", "6월", "7월", "8월"]:  # 26SS
+        # contract_sesn이 26SS인 인플루언서만 필터링
+        season_filter_mask = df['contract_sesn'] == '26SS'
+        season_influencer_ids = df[season_filter_mask]['id'].unique()
+        filtered_summary = influencer_summary[influencer_summary['id'].isin(season_influencer_ids)]
+        return filtered_summary
+    
+    return influencer_summary
+
+def add_monthly_columns(influencer_summary, df, selected_brand_filter):
     """월별 컬럼 추가"""
     months = ["9월", "10월", "11월", "12월", "1월", "2월"]
     for month in months:
         influencer_summary[month] = ""
     
-    # 배정 이력에서 월별 브랜드 정보 채우기
-    if os.path.exists(ASSIGNMENT_FILE):
-        assignment_history = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
-        for _, row in assignment_history.iterrows():
-            influencer_id = row["ID"]
-            month = row["배정월"]
-            brand = row["브랜드"]
-            mask = influencer_summary["id"] == influencer_id
+    # 집행완료된 배정만 월별 브랜드 정보로 표시
+    if os.path.exists(EXECUTION_FILE):
+        execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
+        if not execution_data.empty and '실제집행수' in execution_data.columns:
+            # 실제집행수가 0보다 큰 완료된 배정만 필터링
+            completed_executions = execution_data[execution_data['실제집행수'] > 0]
             
-            if mask.any() and month in influencer_summary.columns:
-                is_executed = False
-                if os.path.exists(EXECUTION_FILE):
-                    execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
-                    if not execution_data.empty:
-                        exec_mask = (
-                            (execution_data['ID'] == influencer_id) &
-                            (execution_data['브랜드'] == brand) &
-                            (execution_data['배정월'] == month)
-                        )
-                        if exec_mask.any() and execution_data.loc[exec_mask, '실제집행수'].iloc[0] > 0:
-                            is_executed = True
-                
-                if is_executed:
-                    current_value = influencer_summary.loc[mask, month].iloc[0]
-                    if current_value == "":
-                        influencer_summary.loc[mask, month] = brand
-                    else:
-                        influencer_summary.loc[mask, month] = current_value + ", " + brand
+            # 브랜드 필터 적용: 특정 브랜드가 선택된 경우 해당 브랜드의 집행만 표시
+            if selected_brand_filter != "전체":
+                completed_executions = completed_executions[completed_executions['브랜드'] == selected_brand_filter]
+            
+            # 인플루언서별, 월별로 브랜드 집계
+            for _, row in influencer_summary.iterrows():
+                influencer_id = row["ID"]
+                for month in months:
+                    # 해당 인플루언서의 해당 월 집행 내역
+                    month_executions = completed_executions[
+                        (completed_executions['ID'] == influencer_id) & 
+                        (completed_executions['배정월'] == month)
+                    ]
+                    
+                    if not month_executions.empty:
+                        # 브랜드별로 고정 순서로 표시 (MLB,DX,DV,ST)
+                        brands = month_executions['브랜드'].unique()
+                        # 고정 순서로 정렬
+                        brand_order = ["MLB", "DX", "DV", "ST"]
+                        sorted_brands = [brand for brand in brand_order if brand in brands]
+                        influencer_summary.loc[influencer_summary['ID'] == influencer_id, month] = ", ".join(sorted_brands)
 
-def render_influencer_table(influencer_summary, selected_brand_filter):
+
+def render_influencer_table(influencer_summary, selected_brand_filter, influencer_count=None):
     """인플루언서 테이블 렌더링"""
-    # 브랜드 하이라이트 CSS 추가
+    # 브랜드 하이라이트 CSS 추가 (전체 필터일 때도 동일한 CSS 구조 유지)
     if selected_brand_filter != "전체":
         st.markdown(f"""
         <style>
@@ -1253,16 +1710,28 @@ def render_influencer_table(influencer_summary, selected_brand_filter):
         }}
         </style>
         """, unsafe_allow_html=True)
+    else:
+        # 전체 필터일 때도 동일한 CSS 구조 유지 (하이라이트 없음)
+        st.markdown("""
+        <style>
+        /* 전체 필터일 때는 하이라이트 없음 */
+        </style>
+        """, unsafe_allow_html=True)
     
-    # 편집 가능한 데이터프레임으로 표시
-    edited_influencer_df = st.data_editor(
-        influencer_summary,
-        use_container_width=True,
-        height=600,
-        hide_index=True,
-        key="influencer_data_editor",
-        column_config=get_influencer_column_config()
-    )
+    # 인플루언서 수를 테이블 바로 위에 표시
+    if influencer_count is not None:
+        st.markdown(f"📊 인플루언서수 : {influencer_count}개")
+    
+    # 편집 가능한 데이터프레임으로 표시 (고정 너비로 일관된 레이아웃)
+    with st.container():
+        edited_influencer_df = st.data_editor(
+            influencer_summary,
+            use_container_width=True,
+            height=600,
+            hide_index=True,
+            key="influencer_data_editor",
+            column_config=get_influencer_column_config()
+        )
     
     # 변경사항 처리
     handle_influencer_changes(edited_influencer_df)
@@ -1272,7 +1741,8 @@ def render_influencer_table(influencer_summary, selected_brand_filter):
         "📥 인플루언서별 배정 현황 엑셀 다운로드",
         to_excel_bytes(influencer_summary),
         file_name="influencer_summary.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="influencer_excel_download_button"
     )
 
 def get_influencer_column_config():
@@ -1281,8 +1751,7 @@ def get_influencer_column_config():
         "번호": st.column_config.NumberColumn(
             "번호",
             help="순서 번호",
-            format="%d",
-            width=10
+            format="%d"
         ),
         "ID": st.column_config.TextColumn(
             "ID",
@@ -1302,19 +1771,43 @@ def get_influencer_column_config():
         ),
         "1회계약단가": st.column_config.NumberColumn(
             "1회계약단가",
-            help="1회 계약 단가",
+            help="1회 계약 단가 (총액/전체계약수)",
             format="%d",
             step=1
         ),
-        "전체계약횟수": st.column_config.NumberColumn(
-            "전체계약횟수",
-            help="전체 계약 횟수",
+        "2차활용": st.column_config.SelectboxColumn(
+            "2차활용",
+            help="2차활용 여부",
+            options=["O", "X"],
+            required=True
+        ),
+        "전체_계약수": st.column_config.NumberColumn(
+            "전체_계약수",
+            help="전체 계약 수",
             format="%d",
             step=1
         ),
-        "실집행수": st.column_config.NumberColumn(
-            "실집행수",
-            help="실제 집행 수",
+        "MLB_계약수": st.column_config.NumberColumn(
+            "MLB_계약수",
+            help="MLB 계약 수",
+            format="%d",
+            step=1
+        ),
+        "DX_계약수": st.column_config.NumberColumn(
+            "DX_계약수",
+            help="DX 계약 수",
+            format="%d",
+            step=1
+        ),
+        "DV_계약수": st.column_config.NumberColumn(
+            "DV_계약수",
+            help="DV 계약 수",
+            format="%d",
+            step=1
+        ),
+        "ST_계약수": st.column_config.NumberColumn(
+            "ST_계약수",
+            help="ST 계약 수",
             format="%d",
             step=1
         ),
@@ -1342,41 +1835,35 @@ def get_influencer_column_config():
             format="%d",
             step=1
         ),
-        "9월": st.column_config.SelectboxColumn(
+        "9월": st.column_config.TextColumn(
             "9월",
             help="9월 배정 브랜드",
-            width="small",
-            options=["", "MLB", "DX", "DV", "ST"]
+            max_chars=None
         ),
-        "10월": st.column_config.SelectboxColumn(
+        "10월": st.column_config.TextColumn(
             "10월",
             help="10월 배정 브랜드",
-            width="small",
-            options=["", "MLB", "DX", "DV", "ST"]
+            max_chars=None
         ),
-        "11월": st.column_config.SelectboxColumn(
+        "11월": st.column_config.TextColumn(
             "11월",
             help="11월 배정 브랜드",
-            width="small",
-            options=["", "MLB", "DX", "DV", "ST"]
+            max_chars=None
         ),
-        "12월": st.column_config.SelectboxColumn(
+        "12월": st.column_config.TextColumn(
             "12월",
             help="12월 배정 브랜드",
-            width="small",
-            options=["", "MLB", "DX", "DV", "ST"]
+            max_chars=None
         ),
-        "1월": st.column_config.SelectboxColumn(
+        "1월": st.column_config.TextColumn(
             "1월",
             help="1월 배정 브랜드",
-            width="small",
-            options=["", "MLB", "DX", "DV", "ST"]
+            max_chars=None
         ),
-        "2월": st.column_config.SelectboxColumn(
+        "2월": st.column_config.TextColumn(
             "2월",
             help="2월 배정 브랜드",
-            width="small",
-            options=["", "MLB", "DX", "DV", "ST"]
+            max_chars=None
         )
     }
 
@@ -1393,23 +1880,20 @@ def handle_influencer_changes(edited_influencer_df):
                 for month in months:
                     new_value = row[month]
                     if new_value and new_value != "":
-                        existing_mask = (
-                            (assignment_history['ID'] == row['ID']) &
-                            (assignment_history['배정월'] == month)
-                        )
-                        
-                        if not existing_mask.any():
-                            new_assignments.append({
-                                '브랜드': new_value,
-                                'ID': row['ID'],
-                                '이름': row['이름'],
-                                '배정월': month
-                            })
+                        # 쉼표가 포함된 브랜드 값은 표시용이므로 실제 배정 데이터에 저장하지 않음
+                        if isinstance(new_value, str) and ',' in new_value:
+                            # 복합 브랜드 값은 건너뛰기 (표시용이므로 실제 배정에 영향 없음)
+                            continue
                         else:
-                            existing_brand = assignment_history.loc[existing_mask, '브랜드'].iloc[0]
-                            if new_value != existing_brand:
-                                assignment_history.loc[existing_mask, '브랜드'] = new_value
-                                updated_assignments.append({
+                            # 단일 브랜드만 처리
+                            existing_mask = (
+                                (assignment_history['ID'] == row['ID']) &
+                                (assignment_history['브랜드'] == new_value) &
+                                (assignment_history['배정월'] == month)
+                            )
+                            
+                            if not existing_mask.any():
+                                new_assignments.append({
                                     '브랜드': new_value,
                                     'ID': row['ID'],
                                     '이름': row['이름'],
@@ -1433,12 +1917,33 @@ def handle_influencer_changes(edited_influencer_df):
 # 메인 앱
 # =============================================================================
 
+def get_season_options(df):
+    """배정월 필터와 동일한 시즌 옵션 반환"""
+    # 배정월 필터에서 사용하는 것과 동일한 시즌 옵션
+    return ["25FW", "26SS"]
+
+def get_month_options_for_season(season):
+    """시즌에 따른 월 옵션 반환 (인플루언서별 탭용)"""
+    return FW_MONTHS if season == "25FW" else SS_MONTHS
+
+def get_influencer_info(influencer_id):
+    """인플루언서 정보 가져오기"""
+    df = load_influencer_data()
+    if df is not None:
+        influencer_data = df[df['id'] == influencer_id]
+        if not influencer_data.empty:
+            return influencer_data.iloc[0].to_dict()
+    return None
+
 def main():
     # 페이지 설정
     st.set_page_config(page_title="인플루언서 배정 앱", layout="wide")
     load_css()
     
     st.title("🎯 인플루언서 배정 앱")
+    
+    # 새로고침 시 전체 선택 상태 초기화
+    st.session_state.select_all = False
     
     # 데이터 로드
     df = load_influencer_data()
