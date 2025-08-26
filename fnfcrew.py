@@ -4,8 +4,8 @@ import os
 import time
 import io
 from datetime import datetime
-import subprocess
-import sys
+import requests
+import json
 
 # =============================================================================
 # 파일 경로 설정
@@ -16,6 +16,90 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 
 # 데이터 파일 경로
+ASSIGNMENT_FILE = os.path.join(DATA_DIR, "assignment_history.csv")
+EXECUTION_FILE = os.path.join(DATA_DIR, "execution_status.csv")
+INFLUENCER_FILE = os.path.join(DATA_DIR, "influencer.csv")
+
+# 데이터 디렉토리가 없으면 생성
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# =============================================================================
+# GitHub Actions 자동 동기화 기능
+# =============================================================================
+
+def trigger_github_workflow(commit_message="Auto-update data files"):
+    """GitHub Actions 워크플로우 트리거"""
+    try:
+        # GitHub Personal Access Token (Streamlit Secrets에서 가져오기)
+        github_token = st.secrets.get("GITHUB_TOKEN", "")
+        repo_owner = st.secrets.get("GITHUB_REPO_OWNER", "jisu8")
+        repo_name = st.secrets.get("GITHUB_REPO_NAME", "influencer-assignment")
+        
+        if not github_token:
+            st.warning("⚠️ GitHub 토큰이 설정되지 않았습니다. 로컬에만 저장됩니다.")
+            return False
+        
+        # GitHub API로 워크플로우 트리거
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/dispatches"
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        data = {
+            "event_type": "data_update",
+            "client_payload": {
+                "message": commit_message,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code == 204:
+            st.success("✅ GitHub Actions가 트리거되었습니다! 데이터가 자동으로 동기화됩니다.")
+            return True
+        else:
+            st.warning(f"⚠️ GitHub Actions 트리거 실패: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        st.warning(f"⚠️ GitHub Actions 트리거 중 오류: {e}")
+        return False
+
+def save_with_auto_sync(data, file_path, commit_message=None):
+    """데이터 저장 후 GitHub Actions로 자동 동기화"""
+    try:
+        # 로컬에 데이터 저장
+        data.to_csv(file_path, index=False, encoding="utf-8")
+        
+        # 커밋 메시지 생성
+        if commit_message is None:
+            filename = os.path.basename(file_path)
+            commit_message = f"Auto-update {filename}"
+        
+        # GitHub Actions 트리거
+        success = trigger_github_workflow(commit_message)
+        
+        if success:
+            st.success(f"✅ 데이터가 저장되고 GitHub에 자동 동기화됩니다!")
+        else:
+            st.success(f"✅ 데이터가 로컬에 저장되었습니다!")
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ 데이터 저장 중 오류가 발생했습니다: {e}")
+        return False
+
+# =============================================================================
+# 기존 파일 경로 설정 (로컬 백업용)
+# =============================================================================
+
+# 현재 스크립트의 디렉토리를 기준으로 상대 경로 설정
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(SCRIPT_DIR, "data")
+
+# 데이터 파일 경로 (로컬 백업용)
 ASSIGNMENT_FILE = os.path.join(DATA_DIR, "assignment_history.csv")
 EXECUTION_FILE = os.path.join(DATA_DIR, "execution_status.csv")
 INFLUENCER_FILE = os.path.join(DATA_DIR, "influencer.csv")
@@ -63,43 +147,60 @@ def auto_push_to_github(commit_message="Auto-update data files"):
         st.error(f"❌ 예상치 못한 오류가 발생했습니다: {e}")
         return False
 
-def check_data_sync_status():
-    """데이터 동기화 상태 확인"""
+def check_github_connection():
+    """GitHub 연결 상태 확인"""
     try:
-        # Git 상태 확인
-        result = subprocess.run(['git', 'status', '--porcelain'], 
-                              capture_output=True, text=True, cwd=SCRIPT_DIR)
+        # GitHub Personal Access Token 확인
+        github_token = st.secrets.get("GITHUB_TOKEN", "")
+        repo_owner = st.secrets.get("GITHUB_REPO_OWNER", "jisu8")
+        repo_name = st.secrets.get("GITHUB_REPO_NAME", "influencer-assignment")
         
-        if result.stdout.strip():
-            st.warning("⚠️ 로컬에 커밋되지 않은 변경사항이 있습니다.")
+        if not github_token:
+            st.warning("⚠️ GitHub 토큰이 설정되지 않았습니다.")
             return False
-        else:
-            st.success("✅ 데이터가 동기화되었습니다.")
+        
+        # GitHub API로 연결 테스트
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}"
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            st.success("✅ GitHub 연결 성공!")
+            repo_info = response.json()
+            st.info(f"📁 저장소: {repo_info['full_name']}")
+            st.info(f"🔗 URL: {repo_info['html_url']}")
             return True
+        else:
+            st.error(f"❌ GitHub 연결 실패: {response.status_code}")
+            return False
             
     except Exception as e:
-        st.error(f"❌ 동기화 상태 확인 중 오류: {e}")
+        st.error(f"❌ GitHub 연결 확인 중 오류: {e}")
         return False
 
-def save_with_auto_push(data, file_path, commit_message=None):
-    """데이터 저장 후 자동으로 GitHub에 푸시"""
+def save_with_auto_sync(data, file_path, sheet_name, commit_message=None):
+    """데이터 저장 후 Google Sheets와 로컬 백업에 동기화"""
     try:
-        # 데이터 저장
+        # 로컬 백업 저장
         data.to_csv(file_path, index=False, encoding="utf-8")
         
-        # 커밋 메시지 생성
-        if commit_message is None:
-            filename = os.path.basename(file_path)
-            commit_message = f"Auto-update {filename}"
+        # Google Sheets에 저장
+        success = save_data_to_sheets(data, sheet_name)
         
-        # GitHub에 자동 푸시
-        success = auto_push_to_github(commit_message)
+        if success:
+            st.success(f"✅ 데이터가 Google Sheets와 로컬에 저장되었습니다!")
+        else:
+            st.warning("⚠️ Google Sheets 저장에 실패했습니다. 로컬 백업만 저장되었습니다.")
         
-        if not success:
-            st.warning("⚠️ 자동 푸시에 실패했습니다. 수동으로 동기화가 필요할 수 있습니다.")
+        return success
         
     except Exception as e:
         st.error(f"❌ 데이터 저장 중 오류가 발생했습니다: {e}")
+        return False
 
 # =============================================================================
 # 상수 정의
@@ -564,8 +665,8 @@ def save_assignments(new_assignments, existing_history):
     else:
         updated_history = result_df
     
-    # 자동 푸시와 함께 저장
-    save_with_auto_push(updated_history, ASSIGNMENT_FILE, "Add new assignments")
+    # GitHub Actions로 자동 동기화 저장
+    save_with_auto_sync(updated_history, ASSIGNMENT_FILE, "Add new assignments")
 
 def clean_brand_columns(df):
     """브랜드 컬럼 정리: 쉼표가 포함된 브랜드 값을 분리"""
@@ -654,8 +755,8 @@ def execute_manual_assignment(selected_month, selected_season, brand, influencer
             # 새로운 배정 추가
             new_assignment = create_manual_assignment_info(influencer_id, brand, selected_month, df)
             assignment_history = pd.concat([assignment_history, pd.DataFrame([new_assignment])], ignore_index=True)
-            # 자동 푸시와 함께 저장
-            save_with_auto_push(assignment_history, ASSIGNMENT_FILE, f"Add manual assignment: {influencer_name} ({brand})")
+            # GitHub Actions로 자동 동기화 저장
+            save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, f"Add manual assignment: {influencer_name} ({brand})")
             
             st.sidebar.success(f"✅ {influencer_name} ({brand}) 배정 추가됨!")
             
@@ -1221,8 +1322,8 @@ def update_assignment_urls(url_changes):
         if mask.any():
             assignment_history.loc[mask, '집행URL'] = change['집행URL']
     
-    # 자동 푸시와 함께 저장
-    save_with_auto_push(assignment_history, ASSIGNMENT_FILE, "Update assignment URLs")
+    # GitHub Actions로 자동 동기화 저장
+    save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, "Update assignment URLs")
 
 def update_execution_data(changes, add=True):
     """실행 데이터 업데이트"""
@@ -1249,8 +1350,8 @@ def update_execution_data(changes, add=True):
             # 배정완료로 되돌리기: 실행 데이터에서만 제거 (배정 데이터는 유지)
             execution_data = execution_data[~existing_mask]
     
-    # 자동 푸시와 함께 저장
-    save_with_auto_push(execution_data, EXECUTION_FILE, "Update execution data")
+    # GitHub Actions로 자동 동기화 저장
+    save_with_auto_sync(execution_data, EXECUTION_FILE, "Update execution data")
 
 def render_assignment_buttons(edited_df, df):
     """배정 버튼들 렌더링"""
@@ -1484,8 +1585,8 @@ def delete_assignments(deletable_rows):
     
     rows_to_remove = list(set(rows_to_remove))
     assignment_history = assignment_history.drop(rows_to_remove)
-    # 자동 푸시와 함께 저장
-    save_with_auto_push(assignment_history, ASSIGNMENT_FILE, "Delete assignments")
+    # GitHub Actions로 자동 동기화 저장
+    save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, "Delete assignments")
 
 def reset_assignments():
     """배정 초기화"""
@@ -1499,16 +1600,16 @@ def reset_assignments():
             if not assignment_history.empty:
                 # 해당 월의 배정 제거
                 assignment_history = assignment_history[assignment_history['배정월'] != current_month]
-                # 자동 푸시와 함께 저장
-                save_with_auto_push(assignment_history, ASSIGNMENT_FILE, f"Reset assignments for {current_month}")
+                # GitHub Actions로 자동 동기화 저장
+                save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, f"Reset assignments for {current_month}")
             
             # 선택된 월의 집행 데이터만 삭제
             if os.path.exists(EXECUTION_FILE):
                 execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
                 if not execution_data.empty:
                     execution_data = execution_data[execution_data['배정월'] != current_month]
-                    # 자동 푸시와 함께 저장
-                    save_with_auto_push(execution_data, EXECUTION_FILE, f"Reset assignments for {current_month}")
+                                    # GitHub Actions로 자동 동기화 저장
+                save_with_auto_sync(execution_data, EXECUTION_FILE, f"Reset assignments for {current_month}")
             
             st.success(f"✅ {current_month} 배정이 초기화되었습니다!")
         else:
@@ -1634,8 +1735,8 @@ def update_assignment_history(assignment_update_data, df=None):
     
     combined_assignment_data = pd.concat([existing_assignment_data, assignment_update_data], ignore_index=True)
     combined_assignment_data = combined_assignment_data.drop_duplicates(subset=['ID', '브랜드', '배정월'], keep='last')
-    # 자동 푸시와 함께 저장
-    save_with_auto_push(combined_assignment_data, ASSIGNMENT_FILE, "Update assignment history from Excel upload")
+    # GitHub Actions로 자동 동기화 저장
+    save_with_auto_sync(combined_assignment_data, ASSIGNMENT_FILE, "Update assignment history from Excel upload")
 
 def update_execution_history(execution_update_data):
     """실행 이력 업데이트"""
@@ -1646,8 +1747,8 @@ def update_execution_history(execution_update_data):
     
     combined_execution_data = pd.concat([existing_execution_data, execution_update_data], ignore_index=True)
     combined_execution_data = combined_execution_data.drop_duplicates(subset=['ID', '브랜드', '배정월'], keep='last')
-    # 자동 푸시와 함께 저장
-    save_with_auto_push(combined_execution_data, EXECUTION_FILE, "Update execution history from Excel upload")
+    # GitHub Actions로 자동 동기화 저장
+    save_with_auto_sync(combined_execution_data, EXECUTION_FILE, "Update execution history from Excel upload")
 
 def render_influencer_tab(df):
     """인플루언서별 탭 렌더링"""
@@ -2013,8 +2114,8 @@ def handle_influencer_changes(edited_influencer_df):
                                 })
         
         if new_assignments or updated_assignments:
-            # 자동 푸시와 함께 저장
-            save_with_auto_push(assignment_history, ASSIGNMENT_FILE, "Update influencer assignments")
+            # GitHub Actions로 자동 동기화 저장
+            save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, "Update influencer assignments")
             
             if new_assignments and updated_assignments:
                 message = f"✅ {len(new_assignments)}개의 새로운 배정이 추가되고 {len(updated_assignments)}개의 배정이 수정되었습니다!"
@@ -2055,11 +2156,11 @@ def main():
     
     st.title("🎯 인플루언서 배정 앱")
     
-    # 데이터 동기화 상태 확인
+    # GitHub 연결 상태 확인
     with st.sidebar:
-        st.markdown("### 🔄 데이터 동기화 상태")
-        if st.button("동기화 상태 확인", key="sync_check"):
-            check_data_sync_status()
+        st.markdown("### 🔄 GitHub 연결 상태")
+        if st.button("연결 상태 확인", key="sync_check"):
+            check_github_connection()
     
     # 새로고침 시 전체 선택 상태 초기화
     st.session_state.select_all = False

@@ -1,0 +1,36 @@
+name: Data Sync Workflow
+
+on:
+  repository_dispatch:
+    types: [data_update]
+
+jobs:
+  sync-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install pandas
+        
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Check if there are any changes
+        if [[ -n $(git status --porcelain) ]]; then
+          git add .
+          git commit -m "Auto-sync data: ${{ github.event.client_payload.message }}"
+          git push
+        else
+          echo "No changes to commit"
+        fi
