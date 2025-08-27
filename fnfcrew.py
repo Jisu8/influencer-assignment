@@ -156,7 +156,7 @@ def check_github_connection():
         repo_name = st.secrets.get("GITHUB_REPO_NAME", "influencer-assignment")
         
         if not github_token:
-            st.warning("⚠️ GitHub 토큰이 설정되지 않았습니다.")
+            st.sidebar.warning("⚠️ GitHub 토큰이 설정되지 않았습니다.")
             return False
         
         # GitHub API로 연결 테스트
@@ -169,17 +169,17 @@ def check_github_connection():
         response = requests.get(url, headers=headers)
         
         if response.status_code == 200:
-            st.success("✅ GitHub 연결 성공!")
+            st.sidebar.success("✅ GitHub 연결 성공!")
             repo_info = response.json()
-            st.info(f"📁 저장소: {repo_info['full_name']}")
-            st.info(f"🔗 URL: {repo_info['html_url']}")
+            st.sidebar.info(f"📁 저장소: {repo_info['full_name']}")
+            st.sidebar.info(f"🔗 URL: {repo_info['html_url']}")
             return True
         else:
-            st.error(f"❌ GitHub 연결 실패: {response.status_code}")
+            st.sidebar.error(f"❌ GitHub 연결 실패: {response.status_code}")
             return False
             
     except Exception as e:
-        st.error(f"❌ GitHub 연결 확인 중 오류: {e}")
+        st.sidebar.error(f"❌ GitHub 연결 확인 중 오류: {e}")
         return False
 
 def save_with_auto_sync(data, file_path, sheet_name, commit_message=None):
@@ -300,6 +300,8 @@ def load_css():
             font-size: 0.8em;
             padding: 2px 0;
         }
+        
+
         
         /* 컨테이너 기반 일관된 레이아웃 - 임시 비활성화 */
         /*
@@ -839,6 +841,11 @@ def render_sidebar(df):
     # 선택된 월을 session_state에 저장
     st.session_state.selected_month = selected_month
     
+    # GitHub 연결 상태 확인 (사이드바 맨 하단에 배치)
+    st.sidebar.markdown("<hr style='margin: 10px 0; border: 0.5px solid #666;'>", unsafe_allow_html=True)
+    if st.sidebar.button("🔗 연결 상태 확인", key="sync_check", use_container_width=True):
+        check_github_connection()
+    
     return selected_month, selected_season, month_options
 
 def render_manual_assignment_section(selected_month, selected_season, df):
@@ -1034,15 +1041,17 @@ def prepare_assignment_data(all_results):
     # 항상 influencer.csv에서 기본 정보 가져오기 (배정 이력과 관계없이)
     influencer_data = pd.read_csv(INFLUENCER_FILE, encoding="utf-8")
     
-    # 1회계약단가와 2차활용은 항상 influencer.csv에서 가져옴
+    # 1회계약단가, 2차활용, 2차기간은 항상 influencer.csv에서 가져옴
     unit_fee_mapping = dict(zip(influencer_data['id'], influencer_data['unit_fee']))
     sec_usage_mapping = dict(zip(influencer_data['id'], influencer_data['sec_usage']))
+    sec_period_mapping = dict(zip(influencer_data['id'], influencer_data['sec_period']))
     
     all_results_with_checkbox['1회계약단가'] = all_results_with_checkbox['ID'].map(unit_fee_mapping).fillna(0)
     all_results_with_checkbox['2차활용'] = all_results_with_checkbox['ID'].map(sec_usage_mapping).fillna('X')
+    all_results_with_checkbox['2차기간'] = all_results_with_checkbox['ID'].map(sec_period_mapping).fillna('')
     
-    # 컬럼 순서 재정렬 (브랜드_잔여수를 브랜드_계약수 다음에, 결과를 맨 오른쪽에 배치)
-    cols = ['선택', '번호', '배정월', '브랜드', 'ID', '이름', 'FLW', '1회계약단가', '2차활용', '브랜드_계약수', '브랜드_잔여수', '집행URL', '결과']
+    # 컬럼 순서 재정렬 (2차활용 다음에 2차기간, 브랜드_잔여수를 브랜드_계약수 다음에, 결과를 맨 오른쪽에 배치)
+    cols = ['선택', '번호', '배정월', '브랜드', 'ID', '이름', 'FLW', '1회계약단가', '2차활용', '2차기간', '브랜드_계약수', '브랜드_잔여수', '결과', '집행URL']
     # 존재하는 컬럼만 필터링
     existing_cols = [col for col in cols if col in all_results_with_checkbox.columns]
     # 나머지 컬럼들 추가
@@ -1067,19 +1076,11 @@ def update_execution_status(all_results_with_checkbox):
 
 def process_numeric_columns(all_results_with_checkbox):
     """숫자 컬럼 처리"""
-    numeric_columns = ['브랜드_계약수']
+    # 모든 숫자 컬럼을 정수형으로 유지 (문자열로 변환하지 않음)
+    numeric_columns = ['브랜드_계약수', 'FLW', '1회계약단가', '브랜드_잔여수']
     for col in numeric_columns:
         if col in all_results_with_checkbox.columns:
-            all_results_with_checkbox[col] = all_results_with_checkbox[col].fillna(0).astype(int).astype(str)
-    
-    if 'FLW' in all_results_with_checkbox.columns:
-        all_results_with_checkbox['FLW'] = all_results_with_checkbox['FLW'].fillna(0).astype(int)
-    
-    if '1회계약단가' in all_results_with_checkbox.columns:
-        all_results_with_checkbox['1회계약단가'] = all_results_with_checkbox['1회계약단가'].fillna(0).astype(int)
-    
-    if '브랜드_잔여수' in all_results_with_checkbox.columns:
-        all_results_with_checkbox['브랜드_잔여수'] = all_results_with_checkbox['브랜드_잔여수'].fillna(0).astype(int)
+            all_results_with_checkbox[col] = all_results_with_checkbox[col].fillna(0).astype(int)
 
 def add_execution_url_column(all_results_with_checkbox):
     """집행URL 컬럼 추가"""
@@ -1127,8 +1128,8 @@ def render_table_controls(all_results_with_checkbox):
 
 def render_download_button(all_results_with_checkbox):
     """다운로드 버튼 렌더링"""
-    # 브랜드_계약수, 실집행수, 전체_계약수, 전체_잔여수 컬럼들을 제외하고 다운로드 (브랜드_잔여수는 포함)
-    available_columns = ['브랜드', 'ID', '이름', '배정월', 'FLW', '1회계약단가', '2차활용', '브랜드_잔여수', '결과', '집행URL']
+    # 요청된 순서: 배정월/브랜드/ID/이름/FLW/2차활용/2차기간/결과/집행URL
+    available_columns = ['배정월', '브랜드', 'ID', '이름', 'FLW', '2차활용', '2차기간', '결과', '집행URL']
     existing_columns = [col for col in available_columns if col in all_results_with_checkbox.columns]
     download_data = all_results_with_checkbox[existing_columns].copy()
     
@@ -1225,10 +1226,16 @@ def render_data_editor(all_results_with_checkbox):
                 options=["O", "X"],
                 required=True
             ),
-            "브랜드_계약수": st.column_config.TextColumn(
+            "2차기간": st.column_config.TextColumn(
+                "2차기간",
+                help="2차활용 기간",
+                max_chars=None
+            ),
+            "브랜드_계약수": st.column_config.NumberColumn(
                 "브랜드_계약수",
                 help="브랜드별 계약 수",
-                max_chars=None
+                format="%d",
+                step=1
             ),
             "브랜드_잔여수": st.column_config.NumberColumn(
                 "브랜드_잔여수",
@@ -1775,7 +1782,7 @@ def render_influencer_tab(df):
 
 def prepare_influencer_summary(df, selected_brand_filter, selected_season_filter):
     """인플루언서 요약 데이터 준비"""
-    influencer_summary = df[["id", "name", "follower", "unit_fee", "sec_usage"]].copy()
+    influencer_summary = df[["id", "name", "follower", "unit_fee", "sec_usage", "sec_period"]].copy()
     
     # 전체 계약수 계산
     qty_cols = [f"{brand.lower()}_qty" for brand in BRANDS]
@@ -1807,21 +1814,41 @@ def prepare_influencer_summary(df, selected_brand_filter, selected_season_filter
     
     # 컬럼명 변경
     influencer_summary = influencer_summary.rename(columns={
-        "id": "ID", "name": "이름", "follower": "FLW", "unit_fee": "1회계약단가", "sec_usage": "2차활용"
+        "id": "ID", "name": "이름", "follower": "FLW", "unit_fee": "1회계약단가", "sec_usage": "2차활용", "sec_period": "2차기간"
     })
     
-    # 전체 필터에서도 전체_계약수 컬럼 유지 (2차활용 오른쪽에 위치)
-    # 전체_계약수 컬럼을 2차활용 다음 위치로 이동
+    # 전체 필터에서도 전체_계약수, 전체_집행수, 전체_잔여수 컬럼 유지 (2차활용 오른쪽에 위치)
+    # 전체_계약수, 전체_집행수, 전체_잔여수 컬럼을 2차활용 다음 위치로 이동
     if "전체_계약수" in influencer_summary.columns:
-        # 2차활용 컬럼 다음 위치에 전체_계약수 이동
+        # 2차활용 컬럼 다음 위치에 전체_계약수, 전체_집행수, 전체_잔여수 이동
         cols = list(influencer_summary.columns)
         if "2차활용" in cols and "전체_계약수" in cols:
             # 2차활용 위치 찾기
             sec_usage_idx = cols.index("2차활용")
-            # 전체_계약수 제거
-            cols.remove("전체_계약수")
-            # 2차활용 다음 위치에 삽입
-            cols.insert(sec_usage_idx + 1, "전체_계약수")
+            
+            # 전체 관련 컬럼들 제거
+            cols_to_remove = ["전체_계약수"]
+            if "전체_집행수" in cols:
+                cols_to_remove.append("전체_집행수")
+            if "전체_잔여수" in cols:
+                cols_to_remove.append("전체_잔여수")
+            
+            for col in cols_to_remove:
+                if col in cols:
+                    cols.remove(col)
+            
+            # 2차기간 컬럼이 이미 존재하므로 제거 후 올바른 위치에 재삽입
+            if "2차기간" in cols:
+                cols.remove("2차기간")
+            
+            # 2차활용 다음 위치에 2차기간, 전체_계약수, 전체_집행수, 전체_잔여수 순서대로 삽입
+            cols.insert(sec_usage_idx + 1, "2차기간")
+            cols.insert(sec_usage_idx + 2, "전체_계약수")
+            if "전체_집행수" in influencer_summary.columns:
+                cols.insert(sec_usage_idx + 3, "전체_집행수")
+            if "전체_잔여수" in influencer_summary.columns:
+                cols.insert(sec_usage_idx + 4, "전체_잔여수")
+            
             influencer_summary = influencer_summary[cols]
     
     # 월별 컬럼 추가 (마지막에 실행)
@@ -1840,13 +1867,30 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
         else:
             influencer_summary[f"{selected_brand}_계약수"] = 0
         
-        # 브랜드 필터에서도 모든 브랜드 계약수 표시 (전체 필터와 동일한 컬럼 수)
-        for brand in BRANDS:
-            qty_col = f"{brand.lower()}_qty"
-            if qty_col in df.columns:
-                influencer_summary[f"{brand}_계약수"] = df.loc[influencer_summary.index, qty_col]
+        # 브랜드별 집행수와 잔여수 계산
+        if os.path.exists(EXECUTION_FILE):
+            execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
+            if not execution_data.empty and '실제집행수' in execution_data.columns:
+                # 해당 브랜드의 집행완료 데이터만 필터링
+                brand_executions = execution_data[
+                    (execution_data['브랜드'] == selected_brand) & 
+                    (execution_data['실제집행수'] > 0)
+                ]
+                
+                # 인플루언서별 해당 브랜드 집행수 계산
+                # execution_data의 컬럼명 확인 (id 또는 ID)
+                id_column = 'ID' if 'ID' in brand_executions.columns else 'id'
+                brand_executed = brand_executions.groupby(id_column)['실제집행수'].sum()
+                influencer_summary[f'{selected_brand}_집행수'] = influencer_summary['id'].map(brand_executed).fillna(0).astype(int)
+                
+                # 브랜드 잔여수 = 브랜드 계약수 - 브랜드 집행수
+                influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수'] - influencer_summary[f'{selected_brand}_집행수']
             else:
-                influencer_summary[f"{brand}_계약수"] = 0
+                influencer_summary[f'{selected_brand}_집행수'] = 0
+                influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수']
+        else:
+            influencer_summary[f'{selected_brand}_집행수'] = 0
+            influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수']
     else:
         # 전체 선택 시 모든 브랜드 계약수 표시
         for brand in BRANDS:
@@ -1855,6 +1899,27 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
                 influencer_summary[f"{brand}_계약수"] = df.loc[influencer_summary.index, qty_col]
             else:
                 influencer_summary[f"{brand}_계약수"] = 0
+        
+        # 전체 선택 시 전체_집행수와 전체_잔여수 계산
+        if os.path.exists(EXECUTION_FILE):
+            execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
+            if not execution_data.empty and '실제집행수' in execution_data.columns:
+                # 모든 브랜드의 집행완료 데이터 필터링
+                all_executions = execution_data[execution_data['실제집행수'] > 0]
+                
+                # 인플루언서별 전체 집행수 계산
+                id_column = 'ID' if 'ID' in all_executions.columns else 'id'
+                total_executed = all_executions.groupby(id_column)['실제집행수'].sum()
+                influencer_summary['전체_집행수'] = influencer_summary['id'].map(total_executed).fillna(0).astype(int)
+                
+                # 전체 잔여수 = 전체 계약수 - 전체 집행수
+                influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수'] - influencer_summary['전체_집행수']
+            else:
+                influencer_summary['전체_집행수'] = 0
+                influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수']
+        else:
+            influencer_summary['전체_집행수'] = 0
+            influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수']
 
 def filter_by_season(influencer_summary, df, target_months):
     """시즌별 필터링"""
@@ -1994,9 +2059,26 @@ def get_influencer_column_config():
             options=["O", "X"],
             required=True
         ),
+        "2차기간": st.column_config.TextColumn(
+            "2차기간",
+            help="2차활용 기간",
+            max_chars=None
+        ),
         "전체_계약수": st.column_config.NumberColumn(
             "전체_계약수",
             help="전체 계약 수",
+            format="%d",
+            step=1
+        ),
+        "전체_집행수": st.column_config.NumberColumn(
+            "전체_집행수",
+            help="전체 집행 수",
+            format="%d",
+            step=1
+        ),
+        "전체_잔여수": st.column_config.NumberColumn(
+            "전체_잔여수",
+            help="전체 잔여 수 (전체계약수 - 전체집행수)",
             format="%d",
             step=1
         ),
@@ -2021,6 +2103,54 @@ def get_influencer_column_config():
         "ST_계약수": st.column_config.NumberColumn(
             "ST_계약수",
             help="ST 계약 수",
+            format="%d",
+            step=1
+        ),
+        "MLB_집행수": st.column_config.NumberColumn(
+            "MLB_집행수",
+            help="MLB 집행 수",
+            format="%d",
+            step=1
+        ),
+        "MLB_잔여수": st.column_config.NumberColumn(
+            "MLB_잔여수",
+            help="MLB 잔여 수 (계약수 - 집행수)",
+            format="%d",
+            step=1
+        ),
+        "DX_집행수": st.column_config.NumberColumn(
+            "DX_집행수",
+            help="DX 집행 수",
+            format="%d",
+            step=1
+        ),
+        "DX_잔여수": st.column_config.NumberColumn(
+            "DX_잔여수",
+            help="DX 잔여 수 (계약수 - 집행수)",
+            format="%d",
+            step=1
+        ),
+        "DV_집행수": st.column_config.NumberColumn(
+            "DV_집행수",
+            help="DV 집행 수",
+            format="%d",
+            step=1
+        ),
+        "DV_잔여수": st.column_config.NumberColumn(
+            "DV_잔여수",
+            help="DV 잔여 수 (계약수 - 집행수)",
+            format="%d",
+            step=1
+        ),
+        "ST_집행수": st.column_config.NumberColumn(
+            "ST_집행수",
+            help="ST 집행 수",
+            format="%d",
+            step=1
+        ),
+        "ST_잔여수": st.column_config.NumberColumn(
+            "ST_잔여수",
+            help="ST 잔여 수 (계약수 - 집행수)",
             format="%d",
             step=1
         ),
@@ -2155,15 +2285,6 @@ def main():
     load_css()
     
     st.title("🎯 인플루언서 배정 앱")
-    
-    # GitHub 연결 상태 확인 (사이드바 맨 위에 배치)
-    with st.sidebar:
-        st.markdown("---")
-        st.markdown("### 🔄 GitHub 연결 상태")
-        st.markdown("GitHub Actions 자동 동기화 연결을 확인합니다.")
-        if st.button("🔗 연결 상태 확인", key="sync_check", use_container_width=True):
-            check_github_connection()
-        st.markdown("---")
     
     # 새로고침 시 전체 선택 상태 초기화
     st.session_state.select_all = False
