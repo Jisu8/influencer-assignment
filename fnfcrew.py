@@ -59,8 +59,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # GitHub Actions 자동 동기화 기능
 # =============================================================================
 
-def trigger_github_workflow(commit_message="Auto-update data files"):
-    """GitHub Actions 워크플로우 트리거"""
+def update_file_via_github_api(file_path, content, commit_message):
+    """GitHub API를 사용해서 파일을 직접 업데이트"""
     try:
         # GitHub Personal Access Token (Streamlit Secrets에서 가져오기)
         github_token = st.secrets.get("GITHUB_TOKEN", "")
@@ -75,61 +75,84 @@ def trigger_github_workflow(commit_message="Auto-update data files"):
             st.warning("⚠️ GitHub 토큰이 설정되지 않았습니다. 로컬에만 저장됩니다.")
             return False
         
-        # GitHub API로 워크플로우 트리거
-        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/dispatches"
+        # GitHub API URL
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}"
         headers = {
             "Authorization": f"token {github_token}",
             "Accept": "application/vnd.github.v3+json"
         }
-        data = {
-            "event_type": "data_update",
-            "client_payload": {
-                "message": commit_message,
-                "timestamp": datetime.now().isoformat()
-            }
-        }
         
         st.sidebar.info(f"🌐 API 호출: {url}")
         
-        response = requests.post(url, headers=headers, json=data)
+        # 현재 파일의 SHA 가져오기 (파일이 존재하는 경우)
+        response = requests.get(url, headers=headers)
+        sha = None
+        if response.status_code == 200:
+            current_file = response.json()
+            sha = current_file['sha']
+            st.sidebar.info("📄 기존 파일 발견, 업데이트 모드")
+        else:
+            st.sidebar.info("📄 새 파일 생성 모드")
+        
+        # 파일 업데이트
+        import base64
+        content_bytes = content.encode('utf-8')
+        content_base64 = base64.b64encode(content_bytes).decode('utf-8')
+        
+        data = {
+            "message": commit_message,
+            "content": content_base64,
+            "sha": sha
+        }
+        
+        response = requests.put(url, headers=headers, json=data)
         
         st.sidebar.info(f"📡 응답 코드: {response.status_code}")
         
-        if response.status_code == 204:
-            st.success("✅ GitHub에 데이터가 자동 동기화되었습니다!")
+        if response.status_code in [200, 201]:
+            st.success("✅ GitHub에 직접 업데이트되었습니다!")
             return True
         else:
-            st.error(f"❌ GitHub 동기화 실패: {response.status_code}")
+            st.error(f"❌ GitHub 업데이트 실패: {response.status_code}")
             if response.status_code == 401:
                 st.error("인증 실패: GitHub 토큰을 확인해주세요.")
             elif response.status_code == 404:
                 st.error("저장소를 찾을 수 없습니다: 저장소 이름을 확인해주세요.")
             elif response.status_code == 403:
                 st.error("권한이 없습니다: 토큰 권한을 확인해주세요.")
+            elif response.status_code == 422:
+                st.error("파일 내용이 동일합니다.")
             return False
             
     except Exception as e:
-        st.error(f"❌ GitHub 동기화 중 오류: {e}")
+        st.error(f"❌ GitHub 업데이트 중 오류: {e}")
         return False
 
 def save_with_auto_sync(data, file_path, commit_message=None):
-    """데이터 저장 후 GitHub Actions로 자동 동기화 (클라우드에서만)"""
+    """데이터 저장 후 GitHub API로 직접 업데이트 (클라우드에서만)"""
     try:
         # 로컬에 데이터 저장
         data.to_csv(file_path, index=False, encoding="utf-8")
         
-        # 클라우드에서만 GitHub 동기화 실행
+        # 클라우드에서만 GitHub API 직접 업데이트 실행
         if is_running_on_streamlit_cloud():
             # 커밋 메시지 생성
             if commit_message is None:
                 filename = os.path.basename(file_path)
                 commit_message = f"Auto-update {filename}"
             
-            # GitHub Actions 트리거
-            sync_success = trigger_github_workflow(commit_message)
+            # 파일 내용을 문자열로 변환
+            content = data.to_csv(index=False, encoding="utf-8")
+            
+            # GitHub 저장소 내의 상대 경로로 변환
+            relative_path = os.path.relpath(file_path, SCRIPT_DIR)
+            relative_path = relative_path.replace('\\', '/')  # Windows 경로를 Unix 경로로 변환
+            
+            # GitHub API로 직접 업데이트
+            sync_success = update_file_via_github_api(relative_path, content, commit_message)
             
             if not sync_success:
-                st.warning("⚠️ GitHub 동기화에 실패했습니다. 수동으로 데이터를 백업해주세요.")
+                st.warning("⚠️ GitHub 업데이트에 실패했습니다. 수동으로 데이터를 백업해주세요.")
         else:
             # 로컬에서는 동기화 없이 저장만
             st.info("💾 로컬에 저장되었습니다. (GitHub 동기화는 클라우드에서만 실행됩니다)")
