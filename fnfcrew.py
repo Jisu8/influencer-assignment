@@ -11,7 +11,13 @@ import json
 # 환경 감지 함수
 def is_running_on_streamlit_cloud():
     """Streamlit Cloud에서 실행 중인지 확인"""
-    return os.environ.get('STREAMLIT_SERVER_HEADLESS', 'false').lower() == 'true'
+    # Streamlit Cloud에서 설정되는 환경변수들 확인
+    cloud_indicators = [
+        'STREAMLIT_SERVER_HEADLESS',
+        'STREAMLIT_SERVER_PORT',
+        'STREAMLIT_SERVER_ADDRESS'
+    ]
+    return any(os.environ.get(indicator) for indicator in cloud_indicators)
 
 # =============================================================================
 # 파일 경로 설정
@@ -195,6 +201,67 @@ def check_github_connection():
             
     except Exception as e:
         st.sidebar.error(f"❌ GitHub 연결 확인 중 오류: {e}")
+        return False
+
+def check_github_sync_status():
+    """클라우드 → GitHub 동기화 상태 확인"""
+    try:
+        # GitHub Personal Access Token 확인
+        github_token = st.secrets.get("GITHUB_TOKEN", "")
+        repo_owner = st.secrets.get("GITHUB_REPO_OWNER", "jisu8")
+        repo_name = st.secrets.get("GITHUB_REPO_NAME", "influencer-assignment")
+        
+        if not github_token:
+            st.sidebar.warning("⚠️ GitHub 토큰이 설정되지 않았습니다.")
+            return False
+        
+        # GitHub에서 최신 데이터 파일 확인
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        # assignment_history.csv 파일 확인
+        assignment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/data/assignment_history.csv"
+        assignment_response = requests.get(assignment_url, headers=headers)
+        
+        # execution_status.csv 파일 확인
+        execution_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/data/execution_status.csv"
+        execution_response = requests.get(execution_url, headers=headers)
+        
+        if assignment_response.status_code == 200 and execution_response.status_code == 200:
+            assignment_data = assignment_response.json()
+            execution_data = execution_response.json()
+            
+            # 파일의 마지막 수정 시간 확인
+            assignment_updated = assignment_data['updated_at']
+            execution_updated = execution_data['updated_at']
+            
+            st.sidebar.success("✅ GitHub 동기화 상태 확인 완료!")
+            st.sidebar.info(f"📊 배정 데이터: {assignment_updated}")
+            st.sidebar.info(f"📈 집행 데이터: {execution_updated}")
+            
+            # 최근 5분 내에 업데이트되었는지 확인
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            assignment_time = datetime.fromisoformat(assignment_updated.replace('Z', '+00:00'))
+            execution_time = datetime.fromisoformat(execution_updated.replace('Z', '+00:00'))
+            
+            time_diff_assignment = (now - assignment_time).total_seconds() / 60
+            time_diff_execution = (now - execution_time).total_seconds() / 60
+            
+            if time_diff_assignment < 5 and time_diff_execution < 5:
+                st.sidebar.success("🟢 최근에 동기화됨 (5분 이내)")
+            else:
+                st.sidebar.warning("🟡 마지막 동기화가 오래됨 (5분 이상)")
+            
+            return True
+        else:
+            st.sidebar.error("❌ GitHub에서 데이터 파일을 찾을 수 없습니다.")
+            return False
+            
+    except Exception as e:
+        st.sidebar.error(f"❌ GitHub 동기화 상태 확인 중 오류: {e}")
         return False
 
 # =============================================================================
@@ -855,15 +922,15 @@ def render_sidebar(df):
     # 선택된 월을 session_state에 저장
     st.session_state.selected_month = selected_month
     
-    # 데이터 동기화 (사이드바 맨 하단에 배치)
+    # GitHub 동기화 상태 확인 (사이드바 맨 하단에 배치)
     st.sidebar.markdown("<hr style='margin: 10px 0; border: 0.5px solid #666;'>", unsafe_allow_html=True)
-    if st.sidebar.button("🔄 데이터동기화", key="data_sync", use_container_width=True):
-        # 연결 상태 확인
+    if st.sidebar.button("🔍 GitHub 동기화 상태 확인", key="github_sync_check", use_container_width=True):
+        # GitHub 연결 상태 확인
         connection_status = check_github_connection()
         
-        # 연결이 성공하면 최신 데이터 가져오기
-        if connection_status:
-            pull_latest_data_from_github(show_in_sidebar=True)
+        # 클라우드에서 실행 중인 경우에만 GitHub 동기화 상태 확인
+        if connection_status and is_running_on_streamlit_cloud():
+            check_github_sync_status()
     
     return selected_month, selected_season, month_options
 
