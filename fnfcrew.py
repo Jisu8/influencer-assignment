@@ -405,7 +405,7 @@ def load_influencer_data():
         st.error("인플루언서 데이터 파일이 없습니다.")
         return None
 
-def pull_latest_data_from_github():
+def pull_latest_data_from_github(show_in_sidebar=False):
     """GitHub에서 최신 데이터 가져오기"""
     try:
         # Git pull 실행
@@ -413,14 +413,23 @@ def pull_latest_data_from_github():
                               capture_output=True, text=True, cwd=SCRIPT_DIR)
         
         if result.returncode == 0:
-            st.success("✅ GitHub에서 최신 데이터를 가져왔습니다!")
+            if show_in_sidebar:
+                st.sidebar.success("✅ GitHub에서 최신 데이터를 가져왔습니다!")
+            else:
+                st.success("✅ GitHub에서 최신 데이터를 가져왔습니다!")
             return True
         else:
-            st.warning(f"⚠️ GitHub에서 데이터 가져오기 실패: {result.stderr}")
+            if show_in_sidebar:
+                st.sidebar.warning(f"⚠️ GitHub에서 데이터 가져오기 실패: {result.stderr}")
+            else:
+                st.warning(f"⚠️ GitHub에서 데이터 가져오기 실패: {result.stderr}")
             return False
             
     except Exception as e:
-        st.warning(f"⚠️ GitHub 데이터 가져오기 중 오류: {e}")
+        if show_in_sidebar:
+            st.sidebar.warning(f"⚠️ GitHub 데이터 가져오기 중 오류: {e}")
+        else:
+            st.warning(f"⚠️ GitHub 데이터 가져오기 중 오류: {e}")
         return False
 
 def load_assignment_history():
@@ -847,7 +856,7 @@ def render_sidebar(df):
     
     # GitHub에서 최신 데이터 가져오기
     if st.sidebar.button("📥 최신 데이터 가져오기", key="pull_data", use_container_width=True):
-        pull_latest_data_from_github()
+        pull_latest_data_from_github(show_in_sidebar=True)
     
     return selected_month, selected_season, month_options
 
@@ -2289,10 +2298,10 @@ def main():
     
     st.title("🎯 인플루언서 배정 앱")
     
-    # 앱 시작 시 GitHub에서 최신 데이터 가져오기
+    # 앱 시작 시 GitHub에서 최신 데이터 가져오기 (조용히)
     if 'data_synced' not in st.session_state:
         with st.spinner("🔄 GitHub에서 최신 데이터를 가져오는 중..."):
-            pull_latest_data_from_github()
+            pull_latest_data_from_github(show_in_sidebar=False)
         st.session_state.data_synced = True
     
     # 새로고침 시 전체 선택 상태 초기화
