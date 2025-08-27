@@ -2301,7 +2301,12 @@ def main():
     # 앱 시작 시 GitHub에서 최신 데이터 가져오기 (조용히)
     if 'data_synced' not in st.session_state:
         with st.spinner("🔄 GitHub에서 최신 데이터를 가져오는 중..."):
-            pull_latest_data_from_github(show_in_sidebar=False)
+            # 조용히 데이터 가져오기 (알림 없이)
+            try:
+                result = subprocess.run(['git', 'pull', 'origin', 'master'], 
+                                      capture_output=True, text=True, cwd=SCRIPT_DIR)
+            except Exception as e:
+                pass  # 오류가 있어도 조용히 처리
         st.session_state.data_synced = True
     
     # 새로고침 시 전체 선택 상태 초기화
