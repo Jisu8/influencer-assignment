@@ -393,7 +393,7 @@ def load_influencer_data():
         return None
 
 def pull_latest_data_from_github(show_in_sidebar=False):
-    """GitHub에서 최신 데이터 가져오기"""
+    """GitHub에서 최신 데이터 가져오기 (코드와 필수 데이터 구조만)"""
     try:
         # Git pull 실행
         result = subprocess.run(['git', 'pull', 'origin', 'master'], 
@@ -401,22 +401,22 @@ def pull_latest_data_from_github(show_in_sidebar=False):
         
         if result.returncode == 0:
             if show_in_sidebar:
-                st.sidebar.success("✅ GitHub에서 최신 데이터를 가져왔습니다!")
+                st.sidebar.success("✅ GitHub에서 최신 코드를 가져왔습니다!")
             else:
-                st.success("✅ GitHub에서 최신 데이터를 가져왔습니다!")
+                st.success("✅ GitHub에서 최신 코드를 가져왔습니다!")
             return True
         else:
             if show_in_sidebar:
-                st.sidebar.warning(f"⚠️ GitHub에서 데이터 가져오기 실패: {result.stderr}")
+                st.sidebar.warning(f"⚠️ GitHub에서 코드 가져오기 실패: {result.stderr}")
             else:
-                st.warning(f"⚠️ GitHub에서 데이터 가져오기 실패: {result.stderr}")
+                st.warning(f"⚠️ GitHub에서 코드 가져오기 실패: {result.stderr}")
             return False
             
     except Exception as e:
         if show_in_sidebar:
-            st.sidebar.warning(f"⚠️ GitHub 데이터 가져오기 중 오류: {e}")
+            st.sidebar.warning(f"⚠️ GitHub 코드 가져오기 중 오류: {e}")
         else:
-            st.warning(f"⚠️ GitHub 데이터 가져오기 중 오류: {e}")
+            st.warning(f"⚠️ GitHub 코드 가져오기 중 오류: {e}")
         return False
 
 def load_assignment_history():
@@ -820,9 +820,9 @@ def render_sidebar(df):
     # 선택된 월을 session_state에 저장
     st.session_state.selected_month = selected_month
     
-    # 데이터 동기화 (사이드바 맨 하단에 배치)
+    # 코드 동기화 (사이드바 맨 하단에 배치)
     st.sidebar.markdown("<hr style='margin: 10px 0; border: 0.5px solid #666;'>", unsafe_allow_html=True)
-    if st.sidebar.button("🔄 데이터동기화", key="data_sync", use_container_width=True):
+    if st.sidebar.button("🔄 코드동기화", key="data_sync", use_container_width=True):
         # 연결 상태 확인
         connection_status = check_github_connection()
         
