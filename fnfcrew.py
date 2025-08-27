@@ -57,14 +57,11 @@ def trigger_github_workflow(commit_message="Auto-update data files"):
         response = requests.post(url, headers=headers, json=data)
         
         if response.status_code == 204:
-            st.success("✅ GitHub Actions가 트리거되었습니다! 데이터가 자동으로 동기화됩니다.")
             return True
         else:
-            st.warning(f"⚠️ GitHub Actions 트리거 실패: {response.status_code}")
             return False
             
     except Exception as e:
-        st.warning(f"⚠️ GitHub Actions 트리거 중 오류: {e}")
         return False
 
 def save_with_auto_sync(data, file_path, commit_message=None):
@@ -78,13 +75,8 @@ def save_with_auto_sync(data, file_path, commit_message=None):
             filename = os.path.basename(file_path)
             commit_message = f"Auto-update {filename}"
         
-        # GitHub Actions 트리거
-        success = trigger_github_workflow(commit_message)
-        
-        if success:
-            st.success(f"✅ 데이터가 저장되고 GitHub에 자동 동기화됩니다!")
-        else:
-            st.success(f"✅ 데이터가 로컬에 저장되었습니다!")
+        # GitHub Actions 트리거 (조용히)
+        trigger_github_workflow(commit_message)
         
         return True
         
@@ -131,20 +123,16 @@ def auto_push_to_github(commit_message="Auto-update data files"):
                                        cwd=SCRIPT_DIR, capture_output=True, text=True)
             
             if push_result.returncode == 0:
-                st.success(f"✅ 데이터가 GitHub에 자동 저장되었습니다!")
                 return True
             else:
-                st.error(f"❌ GitHub 푸시 실패: {push_result.stderr}")
                 return False
         else:
             # 변경사항이 없는 경우
             return False
             
     except subprocess.CalledProcessError as e:
-        st.error(f"❌ GitHub 자동 푸시 중 오류가 발생했습니다: {e}")
         return False
     except Exception as e:
-        st.error(f"❌ 예상치 못한 오류가 발생했습니다: {e}")
         return False
 
 def check_github_connection():
@@ -545,15 +533,9 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
             conflicting_brands.append(brand)
     
     if conflicting_brands:
-        warning_message = f"⚠️ {selected_month}에 다음 브랜드로 이미 배정된 인플루언서가 있습니다:\n"
-        for brand in conflicting_brands:
-            influencers = existing_brand_assignments[brand]
-            warning_message += f"• {brand}: {', '.join(influencers)}\n"
-        warning_message += f"\n기존 배정에 추가로 배정하시겠습니까?"
-        st.warning(warning_message)
+        st.warning(f"⚠️ {selected_month}에 이미 배정된 브랜드가 있습니다. 기존 배정에 추가로 배정합니다.")
     
-    if already_assigned_influencers:
-        st.info(f"ℹ️ {selected_month}에 이미 배정된 인플루언서가 있습니다. 기존 배정에 추가로 배정합니다.")
+    # 중복 알림 제거 - 위의 warning으로 충분함
     
     # 배정 로직 실행
     results = []
@@ -610,9 +592,6 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
     # 결과 저장
     if results:
         save_assignments(results, existing_history)
-        st.success(f"✅ {selected_month} 배정이 완료되었습니다!")
-        # 사용자가 알림을 읽을 수 있도록 3초 대기
-        time.sleep(3)
         st.rerun()
     else:
         st.warning(f"⚠️ {selected_month}에 배정할 수 있는 인플루언서가 없습니다.")
@@ -767,19 +746,12 @@ def execute_manual_assignment(selected_month, selected_season, brand, influencer
             # GitHub Actions로 자동 동기화 저장
             save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, f"Add manual assignment: {influencer_name} ({brand})")
             
-            st.sidebar.success(f"✅ {influencer_name} ({brand}) 배정 추가됨!")
-            
             if 'selected_id' in st.session_state:
                 st.session_state.selected_id = ""
             
-            # 사용자가 알림을 읽을 수 있도록 2초 대기
-            time.sleep(2)
             st.rerun()
         else:
-            # 기존 배정 정보 확인
-            existing_assignment = assignment_history[existing_mask].iloc[0]
-            existing_brand = existing_assignment['브랜드']
-            st.sidebar.warning(f"⚠️ {influencer_name}의 {selected_month} {existing_brand} 배정이 이미 존재합니다.")
+            st.sidebar.warning(f"⚠️ {influencer_name}의 {selected_month} {brand} 배정이 이미 존재합니다.")
     else:
         st.sidebar.error("❌ 올바른 인플루언서 ID를 입력해주세요.")
 
@@ -1003,15 +975,15 @@ def render_assignment_results_tab(month_options, df):
 
 def render_assignment_table(all_results, df):
     """배정 테이블 렌더링"""
-    # 체크박스, 넘버, 결과 상태 추가
+    # 전체 선택/해제 버튼과 다운로드 버튼 (데이터 준비 전에 먼저 렌더링)
+    render_table_controls(all_results)
+    
+    # 체크박스, 넘버, 결과 상태 추가 (버튼 클릭 후 상태 반영)
     all_results_with_checkbox = prepare_assignment_data(all_results)
     
     # 배정 개수 정보 표시
     assignment_count = len(all_results_with_checkbox)
     st.markdown(f"📊 배정 개수: **{assignment_count}개**")
-    
-    # 전체 선택/해제 버튼과 다운로드 버튼
-    render_table_controls(all_results_with_checkbox)
     
     # 데이터프레임 표시
     edited_df = render_data_editor(all_results_with_checkbox)
@@ -1111,7 +1083,7 @@ def add_execution_url_column(all_results_with_checkbox):
                     if pd.notna(url_value) and url_value != "":
                         all_results_with_checkbox.loc[idx, '집행URL'] = url_value
 
-def render_table_controls(all_results_with_checkbox):
+def render_table_controls(all_results):
     """테이블 컨트롤 렌더링"""
     # 하단 버튼들과 정확히 같은 너비로 배치
     col1, col2, col3, col_spacer, col4 = st.columns([0.15, 0.15, 0.15, 0.1, 0.45])
@@ -1135,7 +1107,11 @@ def render_table_controls(all_results_with_checkbox):
             st.rerun()
     
     with col2:
-        render_download_button(all_results_with_checkbox)
+        # 다운로드 버튼은 체크박스가 포함된 데이터가 필요하므로 임시로 준비
+        temp_data = all_results.copy()
+        temp_data['선택'] = st.session_state.get('select_all', False)
+        temp_data['번호'] = range(1, len(temp_data) + 1)
+        render_download_button(temp_data)
     
     with col3:
         pass  # 빈 공간
@@ -1169,9 +1145,6 @@ def render_download_button(all_results_with_checkbox):
 
 def render_data_editor(all_results_with_checkbox):
     """데이터 에디터 렌더링"""
-    # 전체 선택 상태에 따라 체크박스 기본값 설정
-    default_checked = st.session_state.get('select_all', False)
-    
     # 동적 키 생성
     editor_key = f"assignment_data_editor_{st.session_state.get('data_editor_key', 0)}"
     
@@ -1184,7 +1157,6 @@ def render_data_editor(all_results_with_checkbox):
             "선택": st.column_config.CheckboxColumn(
                 "선택",
                 help="실집행완료할 배정을 선택하세요",
-                default=default_checked,
                 width=10
             ),
             "번호": st.column_config.NumberColumn(
@@ -1421,17 +1393,20 @@ def render_execution_complete_button(edited_df):
 def render_delete_assignment_button(edited_df, df):
     """배정 삭제 버튼 렌더링"""
     if st.button("❌ 배정 삭제", type="secondary", use_container_width=True):
-        selected_rows = edited_df[edited_df['선택'] == True]
+        # 선택된 행 인덱스 사용
+        selected_rows = st.session_state.get('selected_rows', [])
         
-        if not selected_rows.empty:
+        if selected_rows and edited_df is not None and not edited_df.empty:
             execution_completed_selected = []
             deletable_rows = []
             
-            for _, row in selected_rows.iterrows():
-                if is_execution_completed(row):
-                    execution_completed_selected.append(f"{row['이름']} ({row['브랜드']})")
-                else:
-                    deletable_rows.append(row)
+            for idx in selected_rows:
+                if idx < len(edited_df):
+                    row = edited_df.iloc[idx]
+                    if is_execution_completed(row):
+                        execution_completed_selected.append(f"{row['이름']} ({row['브랜드']})")
+                    else:
+                        deletable_rows.append(row)
             
             if execution_completed_selected:
                 create_warning_container("집행완료 상태의 배정이 있어 삭제할 수 없습니다. 집행완료를 배정완료로 변경한 후 다시 시도해주세요.", "close_delete_warning")
@@ -2266,15 +2241,6 @@ def handle_influencer_changes(edited_influencer_df):
         if new_assignments or updated_assignments:
             # GitHub Actions로 자동 동기화 저장
             save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, "Update influencer assignments")
-            
-            if new_assignments and updated_assignments:
-                message = f"✅ {len(new_assignments)}개의 새로운 배정이 추가되고 {len(updated_assignments)}개의 배정이 수정되었습니다!"
-            elif new_assignments:
-                message = f"✅ {len(new_assignments)}개의 새로운 배정이 추가되었습니다!"
-            elif updated_assignments:
-                message = f"✅ {len(updated_assignments)}개의 배정이 수정되었습니다!"
-            
-            create_success_container(message, "close_influencer_success")
             st.rerun()
 
 # =============================================================================
@@ -2328,8 +2294,18 @@ def main():
     # 사이드바 렌더링
     selected_month, selected_season, month_options = render_sidebar(df)
     
+    # 탭 상태 초기화
+    if 'current_tab' not in st.session_state:
+        st.session_state.current_tab = 0
+    
     # 탭 생성
     tab1, tab2 = st.tabs(["📊 배정 및 집행결과", "👥 인플루언서별"])
+    
+    # 현재 탭 상태 업데이트
+    if tab1:
+        st.session_state.current_tab = 0
+    elif tab2:
+        st.session_state.current_tab = 1
     
     with tab1:
         render_assignment_results_tab(month_options, df)
