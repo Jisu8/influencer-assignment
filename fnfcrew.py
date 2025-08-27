@@ -275,27 +275,38 @@ def check_github_sync_status():
             assignment_data = assignment_response.json()
             execution_data = execution_response.json()
             
-            # 파일의 마지막 수정 시간 확인
-            assignment_updated = assignment_data['updated_at']
-            execution_updated = execution_data['updated_at']
+            # 파일의 마지막 수정 시간 확인 (안전하게 처리)
+            try:
+                assignment_updated = assignment_data.get('updated_at', '알 수 없음')
+                execution_updated = execution_data.get('updated_at', '알 수 없음')
+            except Exception as e:
+                st.sidebar.error(f"❌ 파일 정보 파싱 오류: {e}")
+                return False
             
             st.sidebar.success("✅ GitHub 동기화 상태 확인 완료!")
             st.sidebar.info(f"📊 배정 데이터: {assignment_updated}")
             st.sidebar.info(f"📈 집행 데이터: {execution_updated}")
             
-            # 최근 5분 내에 업데이트되었는지 확인
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
-            assignment_time = datetime.fromisoformat(assignment_updated.replace('Z', '+00:00'))
-            execution_time = datetime.fromisoformat(execution_updated.replace('Z', '+00:00'))
-            
-            time_diff_assignment = (now - assignment_time).total_seconds() / 60
-            time_diff_execution = (now - execution_time).total_seconds() / 60
-            
-            if time_diff_assignment < 5 and time_diff_execution < 5:
-                st.sidebar.success("🟢 최근에 동기화됨 (5분 이내)")
-            else:
-                st.sidebar.warning("🟡 마지막 동기화가 오래됨 (5분 이상)")
+            # 최근 5분 내에 업데이트되었는지 확인 (안전하게 처리)
+            try:
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                
+                if assignment_updated != '알 수 없음' and execution_updated != '알 수 없음':
+                    assignment_time = datetime.fromisoformat(assignment_updated.replace('Z', '+00:00'))
+                    execution_time = datetime.fromisoformat(execution_updated.replace('Z', '+00:00'))
+                    
+                    time_diff_assignment = (now - assignment_time).total_seconds() / 60
+                    time_diff_execution = (now - execution_time).total_seconds() / 60
+                    
+                    if time_diff_assignment < 5 and time_diff_execution < 5:
+                        st.sidebar.success("🟢 최근에 동기화됨 (5분 이내)")
+                    else:
+                        st.sidebar.warning("🟡 마지막 동기화가 오래됨 (5분 이상)")
+                else:
+                    st.sidebar.warning("⚠️ 파일 수정 시간을 확인할 수 없습니다.")
+            except Exception as e:
+                st.sidebar.warning(f"⚠️ 시간 비교 중 오류: {e}")
             
             return True
         else:
@@ -762,9 +773,30 @@ def create_assignment_info(row, brand, selected_month, df):
         if total_exec_mask.any():
             total_execution_count = execution_data.loc[total_exec_mask, '실제집행수'].sum()
     
-    # 잔여수 계산
-    brand_remaining = max(0, original_brand_qty - brand_execution_count)
-    total_remaining = max(0, original_total_qty - total_execution_count)
+    # 배정 데이터 확인
+    assignment_data = load_assignment_history()
+    brand_assignment_count = 0
+    total_assignment_count = 0
+    
+    if not assignment_data.empty and 'id' in assignment_data.columns and '브랜드' in assignment_data.columns:
+        assign_mask = (
+            (assignment_data['id'] == row['id']) &
+            (assignment_data['브랜드'] == brand) &
+            (assignment_data['결과'] == '배정완료')
+        )
+        if assign_mask.any():
+            brand_assignment_count = len(assignment_data.loc[assign_mask])
+        
+        total_assign_mask = (
+            (assignment_data['id'] == row['id']) &
+            (assignment_data['결과'] == '배정완료')
+        )
+        if total_assign_mask.any():
+            total_assignment_count = len(assignment_data.loc[total_assign_mask])
+    
+    # 잔여수 계산 (계약수 - 집행완료 - 배정완료)
+    brand_remaining = max(0, original_brand_qty - brand_execution_count - brand_assignment_count)
+    total_remaining = max(0, original_total_qty - total_execution_count - total_assignment_count)
     
     return {
         "브랜드": brand,
@@ -916,6 +948,48 @@ def create_manual_assignment_info(influencer_id, brand, selected_month, df):
                          influencer_data.get('dv_qty', 0) + 
                          influencer_data.get('st_qty', 0))
     
+    # 기존 집행 및 배정 데이터 확인
+    execution_data = load_execution_data()
+    assignment_data = load_assignment_history()
+    
+    # 브랜드별 집행수 계산
+    brand_execution_count = 0
+    total_execution_count = 0
+    if not execution_data.empty and 'id' in execution_data.columns and '브랜드' in execution_data.columns:
+        exec_mask = (
+            (execution_data['id'] == influencer_id) &
+            (execution_data['브랜드'] == brand)
+        )
+        if exec_mask.any():
+            brand_execution_count = execution_data.loc[exec_mask, '실제집행수'].sum()
+        
+        total_exec_mask = (execution_data['id'] == influencer_id)
+        if total_exec_mask.any():
+            total_execution_count = execution_data.loc[total_exec_mask, '실제집행수'].sum()
+    
+    # 브랜드별 배정수 계산
+    brand_assignment_count = 0
+    total_assignment_count = 0
+    if not assignment_data.empty and 'id' in assignment_data.columns and '브랜드' in assignment_data.columns:
+        assign_mask = (
+            (assignment_data['id'] == influencer_id) &
+            (assignment_data['브랜드'] == brand) &
+            (assignment_data['결과'] == '배정완료')
+        )
+        if assign_mask.any():
+            brand_assignment_count = len(assignment_data.loc[assign_mask])
+        
+        total_assign_mask = (
+            (assignment_data['id'] == influencer_id) &
+            (assignment_data['결과'] == '배정완료')
+        )
+        if total_assign_mask.any():
+            total_assignment_count = len(assignment_data.loc[total_assign_mask])
+    
+    # 잔여수 계산 (계약수 - 집행완료 - 배정완료)
+    brand_remaining = max(0, brand_contract_qty - brand_execution_count - brand_assignment_count)
+    total_remaining = max(0, total_contract_qty - total_execution_count - total_assignment_count)
+    
     return {
         '브랜드': brand,
         'id': influencer_id,
@@ -925,11 +999,11 @@ def create_manual_assignment_info(influencer_id, brand, selected_month, df):
         '1회계약단가': influencer_data['unit_fee'],
         '2차활용': influencer_data['sec_usage'],
         '브랜드_계약수': brand_contract_qty,
-        '브랜드_실집행수': 0,
-        '브랜드_잔여수': brand_contract_qty,
+        '브랜드_실집행수': brand_execution_count,
+        '브랜드_잔여수': brand_remaining,
         '전체_계약수': total_contract_qty,
-        '전체_실집행수': 0,
-        '전체_잔여수': total_contract_qty,
+        '전체_실집행수': total_execution_count,
+        '전체_잔여수': total_remaining,
         '집행URL': ""
     }
 
@@ -1249,6 +1323,10 @@ def render_table_controls(all_results):
                 st.session_state.select_all = True
             else:
                 st.session_state.select_all = not st.session_state.select_all
+            # 데이터 에디터 키를 변경하여 강제로 새로고침
+            if 'data_editor_key' not in st.session_state:
+                st.session_state.data_editor_key = 0
+            st.session_state.data_editor_key += 1
             st.rerun()
     
     with col2:
@@ -1311,19 +1389,18 @@ def render_download_button(all_results_with_checkbox):
 
 def render_data_editor(all_results_with_checkbox):
     """데이터 에디터 렌더링"""
-    # 전체 선택 상태에 따라 체크박스 기본값 설정
-    default_checked = st.session_state.get('select_all', False)
+    # 동적 키 생성으로 강제 새로고침
+    editor_key = f"assignment_data_editor_{st.session_state.get('data_editor_key', 0)}"
     
     return st.data_editor(
         all_results_with_checkbox,
         use_container_width=True,
         hide_index=True,
-        key="assignment_data_editor",
+        key=editor_key,
         column_config={
             "선택": st.column_config.CheckboxColumn(
                 "선택",
                 help="실집행완료할 배정을 선택하세요",
-                default=default_checked,
                 width=10
             ),
             "번호": st.column_config.NumberColumn(
@@ -1843,48 +1920,55 @@ def process_uploaded_data(uploaded_data, df):
     
     # 필수 컬럼이 있으면 처리 진행
     if all(col in uploaded_data.columns for col in required_columns):
-        # ID를 기반으로 기본 정보 자동 채우기
-        assignment_update_data = uploaded_data[required_columns].copy()
+        # 계약수 검증 및 기본 정보 자동 채우기
+        valid_assignments = []
+        invalid_assignments = []
         
-        # ID에 따라 기본 정보 자동 채우기
-        for idx, row in assignment_update_data.iterrows():
+        for idx, row in uploaded_data.iterrows():
             # id로 인플루언서 정보 찾기
             influencer_info = df[df['id'] == row['id']]
-            if not influencer_info.empty:
-                # 이름 자동 채우기
-                if '이름' not in assignment_update_data.columns:
-                    assignment_update_data['이름'] = ''
-                assignment_update_data.loc[idx, '이름'] = influencer_info.iloc[0]['name']
-                
-                # FLW 자동 채우기
-                if 'FLW' not in assignment_update_data.columns:
-                    assignment_update_data['FLW'] = ''
-                assignment_update_data.loc[idx, 'FLW'] = influencer_info.iloc[0]['follower']
-                
-                # 1회계약단가 자동 채우기
-                if '1회계약단가' not in assignment_update_data.columns:
-                    assignment_update_data['1회계약단가'] = ''
-                assignment_update_data.loc[idx, '1회계약단가'] = influencer_info.iloc[0]['unit_fee']
-                
-                # 2차활용 자동 채우기
-                if '2차활용' not in assignment_update_data.columns:
-                    assignment_update_data['2차활용'] = ''
-                assignment_update_data.loc[idx, '2차활용'] = influencer_info.iloc[0]['sec_usage']
-                
-                # 2차기간 자동 채우기
-                if '2차기간' not in assignment_update_data.columns:
-                    assignment_update_data['2차기간'] = ''
-                assignment_update_data.loc[idx, '2차기간'] = influencer_info.iloc[0]['sec_period']
+            if influencer_info.empty:
+                invalid_assignments.append(f"ID '{row['id']}'를 찾을 수 없습니다.")
+                continue
+            
+            # 브랜드 확인 (기본값: MLB)
+            brand = row.get('브랜드', 'MLB')
+            brand_qty_col = f"{brand.lower()}_qty"
+            
+            # 계약수 확인
+            if brand_qty_col not in df.columns or influencer_info.iloc[0][brand_qty_col] <= 0:
+                invalid_assignments.append(f"'{row['id']}'의 {brand} 브랜드 계약수가 없습니다.")
+                continue
+            
+            # 유효한 배정 데이터로 추가
+            assignment_row = row.copy()
+            
+            # 기본 정보 자동 채우기
+            assignment_row['이름'] = influencer_info.iloc[0]['name']
+            assignment_row['FLW'] = influencer_info.iloc[0]['follower']
+            assignment_row['1회계약단가'] = influencer_info.iloc[0]['unit_fee']
+            assignment_row['2차활용'] = influencer_info.iloc[0]['sec_usage']
+            assignment_row['2차기간'] = influencer_info.iloc[0]['sec_period']
+            assignment_row['브랜드'] = brand
+            assignment_row['브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
+            
+            # 집행URL 컬럼이 없으면 빈 값으로 추가
+            if '집행URL' not in assignment_row:
+                assignment_row['집행URL'] = ''
+            
+            valid_assignments.append(assignment_row)
         
-        # 브랜드 컬럼이 없으면 기본값 추가
-        if '브랜드' not in assignment_update_data.columns:
-            assignment_update_data['브랜드'] = 'MLB'  # 기본값
+        # 오류가 있으면 표시하고 중단
+        if invalid_assignments:
+            st.error("❌ 다음 배정 데이터를 업로드할 수 없습니다:")
+            for error in invalid_assignments:
+                st.error(f"  • {error}")
+            return
         
-        # 집행URL 컬럼이 없으면 빈 값으로 추가
-        if '집행URL' not in assignment_update_data.columns:
-            assignment_update_data['집행URL'] = ''
-        
-        update_assignment_history(assignment_update_data, df)
+        # 유효한 배정 데이터만 처리
+        if valid_assignments:
+            assignment_update_data = pd.DataFrame(valid_assignments)
+            update_assignment_history(assignment_update_data, df)
     
     # 실집행수 데이터 업데이트 (브랜드_실집행수 컬럼이 있는 경우에만)
     if '브랜드_실집행수' in uploaded_data.columns:
@@ -1899,19 +1983,25 @@ def process_uploaded_data(uploaded_data, df):
     else:
         execution_update_data = pd.DataFrame()
     
-    st.success(f"✅ {len(assignment_update_data)}개의 배정 데이터와 {len(execution_update_data)}개의 실집행수 데이터가 업로드되었습니다!")
+    # 업데이트된 배정 데이터 수 계산
+    updated_count = len([row for row in assignment_update_data.iterrows() if 
+                        any((existing_assignment_data['id'] == row[1]['id']) & 
+                            (existing_assignment_data['브랜드'] == row[1]['브랜드']) & 
+                            (existing_assignment_data['배정월'] == row[1]['배정월']))])
+    new_count = len(assignment_update_data) - updated_count
     
-    # 사용자가 알림을 읽을 수 있도록 3초 대기
+    success_message = f"✅ "
+    if new_count > 0:
+        success_message += f"{new_count}개의 새로운 배정 데이터가 추가되었습니다. "
+    if updated_count > 0:
+        success_message += f"{updated_count}개의 기존 배정 데이터가 업데이트되었습니다. "
+    if len(execution_update_data) > 0:
+        success_message += f"{len(execution_update_data)}개의 실집행수 데이터가 업로드되었습니다."
+    
+    st.success(success_message)
+    
+    # 사용자가 알림을 읽을 수 있도록 3초 대기 후 새로고침
     time.sleep(3)
-    
-    # 미리보기
-    st.markdown("**업로드된 배정 데이터 미리보기:**")
-    st.dataframe(assignment_update_data, use_container_width=True)
-    
-    if not execution_update_data.empty:
-        st.markdown("**업로드된 실집행수 데이터 미리보기:**")
-        st.dataframe(execution_update_data, use_container_width=True)
-    
     st.rerun()
 
 def update_assignment_history(assignment_update_data, df=None):
@@ -1923,50 +2013,49 @@ def update_assignment_history(assignment_update_data, df=None):
     else:
         existing_assignment_data = pd.DataFrame(columns=["브랜드", "id", "이름", "배정월", "집행URL"])
     
-    # ID만 입력된 경우 자동으로 이름, 팔로워, 계약수 등의 정보 채우기 (process_uploaded_data에서 이미 처리된 경우 제외)
-    if df is not None:
-        for idx, row in assignment_update_data.iterrows():
-            # 이름이 비어있거나 FLW가 비어있는 경우에만 자동 채우기
-            if (pd.isna(row['이름']) or row['이름'] == "") or ('FLW' in assignment_update_data.columns and (pd.isna(row['FLW']) or row['FLW'] == "")):
-                # ID로 인플루언서 정보 찾기
-                influencer_info = df[df['id'] == row['id']]
-                if not influencer_info.empty:
-                    # 이름이 비어있으면 채우기
-                    if pd.isna(row['이름']) or row['이름'] == "":
-                        assignment_update_data.loc[idx, '이름'] = influencer_info.iloc[0]['name']
-                    
-                    # FLW 컬럼이 없으면 추가하고 채우기
-                    if 'FLW' not in assignment_update_data.columns:
-                        assignment_update_data['FLW'] = ""
-                    if pd.isna(assignment_update_data.loc[idx, 'FLW']) or assignment_update_data.loc[idx, 'FLW'] == "":
-                        assignment_update_data.loc[idx, 'FLW'] = influencer_info.iloc[0]['follower']
-                    
-                    # 브랜드별 계약수 추가
-                    brand_qty_col = f"{row['브랜드'].lower()}_qty"
-                    if brand_qty_col in df.columns:
-                        if '브랜드_계약수' not in assignment_update_data.columns:
-                            assignment_update_data['브랜드_계약수'] = ""
-                        assignment_update_data.loc[idx, '브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
-                    
-                    # 1회계약단가 추가
-                    if '1회계약단가' not in assignment_update_data.columns:
-                        assignment_update_data['1회계약단가'] = ""
-                    assignment_update_data.loc[idx, '1회계약단가'] = influencer_info.iloc[0]['unit_fee']
-                    
-                    # 2차활용 추가
-                    if '2차활용' not in assignment_update_data.columns:
-                        assignment_update_data['2차활용'] = ""
-                    assignment_update_data.loc[idx, '2차활용'] = influencer_info.iloc[0]['sec_usage']
-                    
-                    # 2차기간 추가
-                    if '2차기간' not in assignment_update_data.columns:
-                        assignment_update_data['2차기간'] = ""
-                    assignment_update_data.loc[idx, '2차기간'] = influencer_info.iloc[0]['sec_period']
+    # 업데이트된 데이터를 기존 데이터와 병합
+    updated_data = []
+    new_data = []
     
-    combined_assignment_data = pd.concat([existing_assignment_data, assignment_update_data], ignore_index=True)
-    combined_assignment_data = combined_assignment_data.drop_duplicates(subset=['id', '브랜드', '배정월'], keep='last')
-    # GitHub Actions로 자동 동기화 저장
-    save_with_auto_sync(combined_assignment_data, ASSIGNMENT_FILE, "Update assignment history from Excel upload")
+    for _, new_row in assignment_update_data.iterrows():
+        # 기존 데이터에서 동일한 id, 브랜드, 배정월 조합 찾기
+        existing_mask = (
+            (existing_assignment_data['id'] == new_row['id']) &
+            (existing_assignment_data['브랜드'] == new_row['브랜드']) &
+            (existing_assignment_data['배정월'] == new_row['배정월'])
+        )
+        
+        if existing_mask.any():
+            # 기존 데이터가 있으면 업데이트 (결과, 집행URL 등만 변경)
+            existing_row = existing_assignment_data[existing_mask].iloc[0].copy()
+            
+            # 업데이트 가능한 필드들만 변경
+            updateable_fields = ['결과', '집행URL', '이름', 'FLW', '1회계약단가', '2차활용', '2차기간', '브랜드_계약수']
+            for field in updateable_fields:
+                if field in new_row and field in existing_row:
+                    existing_row[field] = new_row[field]
+            
+            updated_data.append(existing_row)
+        else:
+            # 새로운 데이터는 추가
+            new_data.append(new_row)
+    
+    # 기존 데이터에서 업데이트되지 않은 데이터 유지
+    updated_ids = [(row['id'], row['브랜드'], row['배정월']) for row in updated_data]
+    remaining_data = existing_assignment_data[
+        ~existing_assignment_data.apply(
+            lambda row: (row['id'], row['브랜드'], row['배정월']) in updated_ids, axis=1
+        )
+    ]
+    
+    # 모든 데이터 병합
+    combined_assignment_data = pd.concat([remaining_data, pd.DataFrame(updated_data), pd.DataFrame(new_data)], ignore_index=True)
+    
+    # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
+    if is_running_on_streamlit_cloud():
+        save_with_auto_sync(combined_assignment_data, ASSIGNMENT_FILE, "Update assignment history from Excel upload")
+    else:
+        save_local_only(combined_assignment_data, ASSIGNMENT_FILE)
 
 def update_execution_history(execution_update_data):
     """실행 이력 업데이트"""
@@ -1977,8 +2066,11 @@ def update_execution_history(execution_update_data):
     
     combined_execution_data = pd.concat([existing_execution_data, execution_update_data], ignore_index=True)
     combined_execution_data = combined_execution_data.drop_duplicates(subset=['id', '브랜드', '배정월'], keep='last')
-    # GitHub Actions로 자동 동기화 저장
-    save_with_auto_sync(combined_execution_data, EXECUTION_FILE, "Update execution history from Excel upload")
+    # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
+    if is_running_on_streamlit_cloud():
+        save_with_auto_sync(combined_execution_data, EXECUTION_FILE, "Update execution history from Excel upload")
+    else:
+        save_local_only(combined_execution_data, EXECUTION_FILE)
 
 def render_influencer_tab(df):
     """인플루언서별 탭 렌더링"""
@@ -2106,8 +2198,26 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
                 brand_executed = brand_executions.groupby(id_column)['실제집행수'].sum()
                 influencer_summary[f'{selected_brand}_집행수'] = influencer_summary['id'].map(brand_executed).fillna(0).astype(int)
                 
-                # 브랜드 잔여수 = 브랜드 계약수 - 브랜드 집행수
-                influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수'] - influencer_summary[f'{selected_brand}_집행수']
+                # 브랜드별 배정완료 데이터 계산
+                if os.path.exists(ASSIGNMENT_FILE):
+                    assignment_data = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
+                    if not assignment_data.empty:
+                        # 해당 브랜드의 배정완료 데이터만 필터링
+                        brand_assignments = assignment_data[
+                            (assignment_data['브랜드'] == selected_brand) & 
+                            (assignment_data['결과'] == '배정완료')
+                        ]
+                        
+                        # 인플루언서별 해당 브랜드 배정수 계산
+                        brand_assigned = brand_assignments.groupby('id').size()
+                        influencer_summary[f'{selected_brand}_배정수'] = influencer_summary['id'].map(brand_assigned).fillna(0).astype(int)
+                    else:
+                        influencer_summary[f'{selected_brand}_배정수'] = 0
+                else:
+                    influencer_summary[f'{selected_brand}_배정수'] = 0
+                
+                # 브랜드 잔여수 = 브랜드 계약수 - (집행완료 + 배정완료)
+                influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수'] - (influencer_summary[f'{selected_brand}_집행수'] + influencer_summary[f'{selected_brand}_배정수'])
             else:
                 influencer_summary[f'{selected_brand}_집행수'] = 0
                 influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수']
@@ -2135,8 +2245,23 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
                 total_executed = all_executions.groupby(id_column)['실제집행수'].sum()
                 influencer_summary['전체_집행수'] = influencer_summary['id'].map(total_executed).fillna(0).astype(int)
                 
-                # 전체 잔여수 = 전체 계약수 - 전체 집행수
-                influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수'] - influencer_summary['전체_집행수']
+                # 전체 배정완료 데이터 계산
+                if os.path.exists(ASSIGNMENT_FILE):
+                    assignment_data = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
+                    if not assignment_data.empty:
+                        # 모든 브랜드의 배정완료 데이터 필터링
+                        all_assignments = assignment_data[assignment_data['결과'] == '배정완료']
+                        
+                        # 인플루언서별 전체 배정수 계산
+                        total_assigned = all_assignments.groupby('id').size()
+                        influencer_summary['전체_배정수'] = influencer_summary['id'].map(total_assigned).fillna(0).astype(int)
+                    else:
+                        influencer_summary['전체_배정수'] = 0
+                else:
+                    influencer_summary['전체_배정수'] = 0
+                
+                # 전체 잔여수 = 전체 계약수 - (전체 집행수 + 전체 배정수)
+                influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수'] - (influencer_summary['전체_집행수'] + influencer_summary['전체_배정수'])
             else:
                 influencer_summary['전체_집행수'] = 0
                 influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수']
