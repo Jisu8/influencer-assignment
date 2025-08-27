@@ -1992,20 +1992,10 @@ def process_uploaded_data(uploaded_data, df):
     else:
         execution_update_data = pd.DataFrame()
     
-    # 업데이트된 배정 데이터 수 계산
-    updated_count = len([row for row in assignment_update_data.iterrows() if 
-                        any((existing_assignment_data['id'] == row[1]['id']) & 
-                            (existing_assignment_data['브랜드'] == row[1]['브랜드']) & 
-                            (existing_assignment_data['배정월'] == row[1]['배정월']))])
-    new_count = len(assignment_update_data) - updated_count
-    
-    success_message = f"✅ "
-    if new_count > 0:
-        success_message += f"{new_count}개의 새로운 배정 데이터가 추가되었습니다. "
-    if updated_count > 0:
-        success_message += f"{updated_count}개의 기존 배정 데이터가 업데이트되었습니다. "
+    # 성공 메시지 생성
+    success_message = f"✅ {len(assignment_update_data)}개의 배정 데이터가 업로드되었습니다."
     if len(execution_update_data) > 0:
-        success_message += f"{len(execution_update_data)}개의 실집행수 데이터가 업로드되었습니다."
+        success_message += f" {len(execution_update_data)}개의 실집행수 데이터가 업로드되었습니다."
     
     st.success(success_message)
     
