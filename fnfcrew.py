@@ -195,10 +195,26 @@ def auto_push_to_github(commit_message="Auto-update data files"):
             
             # 원격 변경사항 먼저 가져오기 (충돌 방지)
             try:
-                pull_result = subprocess.run(['git', 'pull', 'origin', 'master'], 
+                # 먼저 fetch로 원격 변경사항 확인
+                fetch_result = subprocess.run(['git', 'fetch', 'origin'], 
                                            cwd=SCRIPT_DIR, capture_output=True, text=True)
-                if pull_result.returncode != 0:
-                    print(f"Git pull warning: {pull_result.stderr}")
+                
+                # 로컬과 원격의 차이 확인
+                status_result = subprocess.run(['git', 'status', '--porcelain'], 
+                                            cwd=SCRIPT_DIR, capture_output=True, text=True)
+                
+                if status_result.stdout.strip():
+                    # 로컬에 변경사항이 있으면 pull 시도
+                    pull_result = subprocess.run(['git', 'pull', 'origin', 'master'], 
+                                               cwd=SCRIPT_DIR, capture_output=True, text=True)
+                    if pull_result.returncode != 0:
+                        print(f"Git pull warning: {pull_result.stderr}")
+                        # 충돌이 있으면 reset 후 다시 시도
+                        subprocess.run(['git', 'reset', '--hard', 'HEAD'], 
+                                     cwd=SCRIPT_DIR, capture_output=True, text=True)
+                        subprocess.run(['git', 'pull', 'origin', 'master'], 
+                                     cwd=SCRIPT_DIR, capture_output=True, text=True)
+                        
             except Exception as e:
                 print(f"Git pull error: {e}")
             
@@ -1910,8 +1926,8 @@ def handle_excel_upload(uploaded_file, df):
         else:
             uploaded_data = pd.read_excel(uploaded_file, engine='xlrd')
         
-        # 필수 컬럼만 검증 (id, 배정월, 결과만 필수, 나머지는 선택사항)
-        required_columns = ['id', '배정월', '결과']
+        # 필수 컬럼만 검증 (id, 브랜드, 배정월, 결과만 필수, 나머지는 선택사항)
+        required_columns = ['id', '브랜드', '배정월', '결과']
         missing_columns = [col for col in required_columns if col not in uploaded_data.columns]
         
         if missing_columns:
@@ -1925,7 +1941,7 @@ def handle_excel_upload(uploaded_file, df):
 def process_uploaded_data(uploaded_data, df):
     """업로드된 데이터 처리"""
     # 필수 컬럼 확인
-    required_columns = ['id', '배정월', '결과']
+    required_columns = ['id', '브랜드', '배정월', '결과']
     
     # 필수 컬럼이 있으면 처리 진행
     if all(col in uploaded_data.columns for col in required_columns):
@@ -1940,14 +1956,9 @@ def process_uploaded_data(uploaded_data, df):
                 invalid_assignments.append(f"ID '{row['id']}'를 찾을 수 없습니다.")
                 continue
             
-            # 브랜드 확인 (기본값: MLB)
-            brand = row.get('브랜드', 'MLB')
+            # 브랜드 필수 확인
+            brand = row['브랜드']  # 브랜드는 필수이므로 기본값 없음
             brand_qty_col = f"{brand.lower()}_qty"
-            
-            # 계약수 확인
-            if brand_qty_col not in df.columns or influencer_info.iloc[0][brand_qty_col] <= 0:
-                invalid_assignments.append(f"'{row['id']}'의 {brand} 브랜드 계약수가 없습니다.")
-                continue
             
             # 유효한 배정 데이터로 추가
             assignment_row = row.copy()
@@ -1958,8 +1969,11 @@ def process_uploaded_data(uploaded_data, df):
             assignment_row['1회계약단가'] = influencer_info.iloc[0]['unit_fee']
             assignment_row['2차활용'] = influencer_info.iloc[0]['sec_usage']
             assignment_row['2차기간'] = influencer_info.iloc[0]['sec_period']
-            assignment_row['브랜드'] = brand
-            assignment_row['브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
+            # 브랜드 계약수 자동 채우기 (ID 기반)
+            if brand_qty_col in df.columns:
+                assignment_row['브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
+            else:
+                assignment_row['브랜드_계약수'] = ""
             
             # 집행URL 컬럼이 없으면 빈 값으로 추가
             if '집행URL' not in assignment_row:
