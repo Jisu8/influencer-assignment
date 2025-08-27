@@ -755,8 +755,11 @@ def save_assignments(new_assignments, existing_history):
     else:
         updated_history = result_df
     
-    # 로컬에만 저장 (GitHub 동기화 없음)
-    save_local_only(updated_history, ASSIGNMENT_FILE)
+    # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
+    if is_running_on_streamlit_cloud():
+        save_with_auto_sync(updated_history, ASSIGNMENT_FILE, "자동 배정 실행")
+    else:
+        save_local_only(updated_history, ASSIGNMENT_FILE)
 
 def clean_brand_columns(df):
     """브랜드 컬럼 정리: 쉼표가 포함된 브랜드 값을 분리"""
@@ -845,8 +848,11 @@ def execute_manual_assignment(selected_month, selected_season, brand, influencer
             # 새로운 배정 추가
             new_assignment = create_manual_assignment_info(influencer_id, brand, selected_month, df)
             assignment_history = pd.concat([assignment_history, pd.DataFrame([new_assignment])], ignore_index=True)
-            # 로컬에만 저장 (GitHub 동기화 없음)
-            save_local_only(assignment_history, ASSIGNMENT_FILE)
+            # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
+            if is_running_on_streamlit_cloud():
+                save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, "수동 배정 추가")
+            else:
+                save_local_only(assignment_history, ASSIGNMENT_FILE)
             
             if 'selected_id' in st.session_state:
                 st.session_state.selected_id = ""
@@ -1440,8 +1446,11 @@ def update_assignment_urls(url_changes):
         if mask.any():
             assignment_history.loc[mask, '집행URL'] = change['집행URL']
     
-    # 로컬에만 저장 (GitHub 동기화 없음)
-    save_local_only(assignment_history, ASSIGNMENT_FILE)
+    # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
+    if is_running_on_streamlit_cloud():
+        save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, "집행URL 업데이트")
+    else:
+        save_local_only(assignment_history, ASSIGNMENT_FILE)
 
 def update_execution_data(changes, add=True):
     """실행 데이터 업데이트"""
@@ -1468,8 +1477,11 @@ def update_execution_data(changes, add=True):
             # 배정완료로 되돌리기: 실행 데이터에서만 제거 (배정 데이터는 유지)
             execution_data = execution_data[~existing_mask]
     
-    # 로컬에만 저장 (GitHub 동기화 없음)
-    save_local_only(execution_data, EXECUTION_FILE)
+    # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
+    if is_running_on_streamlit_cloud():
+        save_with_auto_sync(execution_data, EXECUTION_FILE, "집행 데이터 업데이트")
+    else:
+        save_local_only(execution_data, EXECUTION_FILE)
 
 def render_assignment_buttons(edited_df, df):
     """배정 버튼들 렌더링"""
@@ -1706,8 +1718,11 @@ def delete_assignments(deletable_rows):
     
     rows_to_remove = list(set(rows_to_remove))
     assignment_history = assignment_history.drop(rows_to_remove)
-    # 로컬에만 저장 (GitHub 동기화 없음)
-    save_local_only(assignment_history, ASSIGNMENT_FILE)
+    # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
+    if is_running_on_streamlit_cloud():
+        save_with_auto_sync(assignment_history, ASSIGNMENT_FILE, "배정 삭제")
+    else:
+        save_local_only(assignment_history, ASSIGNMENT_FILE)
 
 def reset_assignments():
     """배정 초기화"""
