@@ -21,6 +21,21 @@ jobs:
       run: |
         pip install pandas
         
+    - name: Debug - Show current directory and files
+      run: |
+        echo "Current directory: $(pwd)"
+        echo "Files in current directory:"
+        ls -la
+        echo "Files in data directory (if exists):"
+        ls -la data/ 2>/dev/null || echo "Data directory does not exist"
+        
+    - name: Debug - Show git status
+      run: |
+        echo "Git status:"
+        git status
+        echo "Git log (last 3 commits):"
+        git log --oneline -3
+        
     - name: Commit and push changes
       run: |
         git config --local user.email "action@github.com"
@@ -28,10 +43,17 @@ jobs:
         
         # Create data directory if it doesn't exist
         mkdir -p data
+        echo "Data directory created/verified"
+        
+        # List all files in data directory
+        echo "Files in data directory:"
+        ls -la data/
         
         # Check if data files exist and have content
         if [[ -f data/assignment_history.csv ]] && [[ -s data/assignment_history.csv ]]; then
           echo "Data files exist and have content, checking for changes..."
+          echo "Assignment history file content (first 3 lines):"
+          head -3 data/assignment_history.csv
           
           # Check if there are any changes in data files
           if [[ -n $(git status --porcelain data/*.csv) ]]; then
@@ -39,19 +61,34 @@ jobs:
             git add data/*.csv
             git commit -m "Auto-sync data: ${{ github.event.client_payload.message }}"
             git push
+            echo "Changes committed and pushed successfully"
           else
             echo "No data file changes to commit"
           fi
         else
           echo "Data files do not exist or are empty"
+          echo "Creating data files..."
+          
           # Create empty data files if they don't exist
           if [[ ! -f data/assignment_history.csv ]]; then
             echo "브랜드,id,이름,배정월,FLW,브랜드_계약수,브랜드_실집행수,브랜드_잔여수,전체_계약수,전체_실집행수,전체_잔여수,집행URL" > data/assignment_history.csv
+            echo "Created assignment_history.csv"
           fi
           if [[ ! -f data/execution_status.csv ]]; then
             echo "id,이름,브랜드,배정월,실제집행수" > data/execution_status.csv
+            echo "Created execution_status.csv"
           fi
+          
+          echo "Adding and committing data files..."
           git add data/*.csv
           git commit -m "Initialize empty data files"
           git push
+          echo "Data files initialized and pushed successfully"
         fi
+        
+    - name: Debug - Show final status
+      run: |
+        echo "Final git status:"
+        git status
+        echo "Final git log (last 3 commits):"
+        git log --oneline -3
