@@ -96,7 +96,6 @@ def update_file_via_github_api(file_path, content, commit_message):
         response = requests.put(url, headers=headers, json=data)
         
         if response.status_code in [200, 201]:
-            st.success("✅ GitHub에 직접 업데이트되었습니다!")
             return True
         else:
             st.error(f"❌ GitHub 업데이트 실패: {response.status_code}")
@@ -134,7 +133,7 @@ def save_with_auto_sync(data, file_path, commit_message=None):
             relative_path = os.path.relpath(file_path, SCRIPT_DIR)
             relative_path = relative_path.replace('\\', '/')  # Windows 경로를 Unix 경로로 변환
             
-            # GitHub API로 직접 업데이트
+            # GitHub API로 직접 업데이트 (알림 없이)
             sync_success = update_file_via_github_api(relative_path, content, commit_message)
             
             if not sync_success:
