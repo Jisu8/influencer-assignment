@@ -820,14 +820,15 @@ def render_sidebar(df):
     # 선택된 월을 session_state에 저장
     st.session_state.selected_month = selected_month
     
-    # GitHub 연결 상태 확인 (사이드바 맨 하단에 배치)
+    # 데이터 동기화 (사이드바 맨 하단에 배치)
     st.sidebar.markdown("<hr style='margin: 10px 0; border: 0.5px solid #666;'>", unsafe_allow_html=True)
-    if st.sidebar.button("🔗 연결 상태 확인", key="sync_check", use_container_width=True):
-        check_github_connection()
-    
-    # GitHub에서 최신 데이터 가져오기
-    if st.sidebar.button("📥 최신 데이터 가져오기", key="pull_data", use_container_width=True):
-        pull_latest_data_from_github(show_in_sidebar=True)
+    if st.sidebar.button("🔄 데이터동기화", key="data_sync", use_container_width=True):
+        # 연결 상태 확인
+        connection_status = check_github_connection()
+        
+        # 연결이 성공하면 최신 데이터 가져오기
+        if connection_status:
+            pull_latest_data_from_github(show_in_sidebar=True)
     
     return selected_month, selected_season, month_options
 
@@ -975,15 +976,15 @@ def render_assignment_results_tab(month_options, df):
 
 def render_assignment_table(all_results, df):
     """배정 테이블 렌더링"""
-    # 전체 선택/해제 버튼과 다운로드 버튼 (데이터 준비 전에 먼저 렌더링)
-    render_table_controls(all_results)
-    
-    # 체크박스, 넘버, 결과 상태 추가 (버튼 클릭 후 상태 반영)
+    # 체크박스, 넘버, 결과 상태 추가
     all_results_with_checkbox = prepare_assignment_data(all_results)
     
     # 배정 개수 정보 표시
     assignment_count = len(all_results_with_checkbox)
     st.markdown(f"📊 배정 개수: **{assignment_count}개**")
+    
+    # 전체 선택/해제 버튼과 다운로드 버튼
+    render_table_controls(all_results_with_checkbox)
     
     # 데이터프레임 표시
     edited_df = render_data_editor(all_results_with_checkbox)
@@ -1098,12 +1099,6 @@ def render_table_controls(all_results):
                 st.session_state.select_all = True
             else:
                 st.session_state.select_all = not st.session_state.select_all
-            
-            # 데이터 에디터 키를 변경하여 강제 새로고침
-            if 'data_editor_key' not in st.session_state:
-                st.session_state.data_editor_key = 0
-            st.session_state.data_editor_key += 1
-            
             st.rerun()
     
     with col2:
@@ -1123,8 +1118,29 @@ def render_download_button(all_results_with_checkbox):
     """다운로드 버튼 렌더링"""
     # 요청된 순서: 배정월/브랜드/ID/이름/FLW/2차활용/2차기간/결과/집행URL
     available_columns = ['배정월', '브랜드', 'ID', '이름', 'FLW', '2차활용', '2차기간', '결과', '집행URL']
-    existing_columns = [col for col in available_columns if col in all_results_with_checkbox.columns]
-    download_data = all_results_with_checkbox[existing_columns].copy()
+    
+    # 누락된 컬럼들을 기본값으로 추가
+    download_data = all_results_with_checkbox.copy()
+    
+    # 2차활용 컬럼이 없으면 기본값 'X'로 추가
+    if '2차활용' not in download_data.columns:
+        download_data['2차활용'] = 'X'
+    
+    # 2차기간 컬럼이 없으면 기본값 ''로 추가
+    if '2차기간' not in download_data.columns:
+        download_data['2차기간'] = ''
+    
+    # 결과 컬럼이 없으면 기본값 '배정완료'로 추가
+    if '결과' not in download_data.columns:
+        download_data['결과'] = '배정완료'
+    
+    # 집행URL 컬럼이 없으면 기본값 ''로 추가
+    if '집행URL' not in download_data.columns:
+        download_data['집행URL'] = ''
+    
+    # 요청된 순서대로 컬럼 선택
+    existing_columns = [col for col in available_columns if col in download_data.columns]
+    download_data = download_data[existing_columns].copy()
     
     if '결과' in download_data.columns:
         download_data['결과'] = download_data['결과'].replace({
@@ -1145,18 +1161,19 @@ def render_download_button(all_results_with_checkbox):
 
 def render_data_editor(all_results_with_checkbox):
     """데이터 에디터 렌더링"""
-    # 동적 키 생성
-    editor_key = f"assignment_data_editor_{st.session_state.get('data_editor_key', 0)}"
+    # 전체 선택 상태에 따라 체크박스 기본값 설정
+    default_checked = st.session_state.get('select_all', False)
     
     return st.data_editor(
         all_results_with_checkbox,
         use_container_width=True,
         hide_index=True,
-        key=editor_key,
+        key="assignment_data_editor",
         column_config={
             "선택": st.column_config.CheckboxColumn(
                 "선택",
                 help="실집행완료할 배정을 선택하세요",
+                default=default_checked,
                 width=10
             ),
             "번호": st.column_config.NumberColumn(
@@ -1414,8 +1431,8 @@ def render_delete_assignment_button(edited_df, df):
             if deletable_rows:
                 delete_assignments(deletable_rows)
                 st.success(f"✅ {len(deletable_rows)}개의 배정이 삭제되었습니다!")
-                # 사용자가 알림을 읽을 수 있도록 2초 대기
-                time.sleep(2)
+                # 사용자가 알림을 읽을 수 있도록 3초 대기
+                time.sleep(3)
                 st.rerun()
         else:
             st.warning("⚠️ 삭제할 배정을 선택해주세요.")
@@ -1481,8 +1498,8 @@ def render_reset_assignment_button(df):
                     # 성공 메시지 표시
                     st.success("✅ 초기화가 완료되었습니다!")
                     
-                    # 사용자가 알림을 읽을 수 있도록 2초 대기
-                    time.sleep(2)
+                    # 사용자가 알림을 읽을 수 있도록 3초 대기
+                    time.sleep(3)
                     
                     # 상태 초기화
                     st.session_state.reset_verification_done = False
@@ -1496,8 +1513,8 @@ def render_reset_assignment_button(df):
             reset_assignments()
             st.success("✅ 초기화가 완료되었습니다!")
             
-            # 사용자가 알림을 읽을 수 있도록 2초 대기
-            time.sleep(2)
+            # 사용자가 알림을 읽을 수 있도록 3초 대기
+            time.sleep(3)
             
             # 상태 초기화
             st.session_state.reset_verification_done = False
@@ -1648,8 +1665,8 @@ def handle_excel_upload(uploaded_file, df):
         else:
             uploaded_data = pd.read_excel(uploaded_file, engine='xlrd')
         
-        # 필수 컬럼만 검증 (브랜드_계약수, 실집행수, 잔여수는 선택사항)
-        required_columns = ['브랜드', 'ID', '이름', '배정월', '집행URL']
+        # 필수 컬럼만 검증 (ID, 배정월, 결과만 필수, 나머지는 선택사항)
+        required_columns = ['ID', '배정월', '결과']
         missing_columns = [col for col in required_columns if col not in uploaded_data.columns]
         
         if missing_columns:
@@ -1662,14 +1679,53 @@ def handle_excel_upload(uploaded_file, df):
 
 def process_uploaded_data(uploaded_data, df):
     """업로드된 데이터 처리"""
-    # 업로드 시에는 모든 컬럼을 허용하되, 필수 컬럼만 사용
-    required_columns = ['브랜드', 'ID', '이름', '배정월', '집행URL']
-    available_columns = [col for col in required_columns if col in uploaded_data.columns]
-    uploaded_data = uploaded_data[available_columns].copy()
+    # 필수 컬럼 확인
+    required_columns = ['ID', '배정월', '결과']
     
-    # 배정 이력 업데이트
-    assignment_update_data = uploaded_data[['브랜드', 'ID', '이름', '배정월', '집행URL']].copy()
-    update_assignment_history(assignment_update_data, df)
+    # 필수 컬럼이 있으면 처리 진행
+    if all(col in uploaded_data.columns for col in required_columns):
+        # ID를 기반으로 기본 정보 자동 채우기
+        assignment_update_data = uploaded_data[required_columns].copy()
+        
+        # ID에 따라 기본 정보 자동 채우기
+        for idx, row in assignment_update_data.iterrows():
+            # ID로 인플루언서 정보 찾기
+            influencer_info = df[df['id'] == row['ID']]
+            if not influencer_info.empty:
+                # 이름 자동 채우기
+                if '이름' not in assignment_update_data.columns:
+                    assignment_update_data['이름'] = ''
+                assignment_update_data.loc[idx, '이름'] = influencer_info.iloc[0]['name']
+                
+                # FLW 자동 채우기
+                if 'FLW' not in assignment_update_data.columns:
+                    assignment_update_data['FLW'] = ''
+                assignment_update_data.loc[idx, 'FLW'] = influencer_info.iloc[0]['follower']
+                
+                # 1회계약단가 자동 채우기
+                if '1회계약단가' not in assignment_update_data.columns:
+                    assignment_update_data['1회계약단가'] = ''
+                assignment_update_data.loc[idx, '1회계약단가'] = influencer_info.iloc[0]['unit_fee']
+                
+                # 2차활용 자동 채우기
+                if '2차활용' not in assignment_update_data.columns:
+                    assignment_update_data['2차활용'] = ''
+                assignment_update_data.loc[idx, '2차활용'] = influencer_info.iloc[0]['sec_usage']
+                
+                # 2차기간 자동 채우기
+                if '2차기간' not in assignment_update_data.columns:
+                    assignment_update_data['2차기간'] = ''
+                assignment_update_data.loc[idx, '2차기간'] = influencer_info.iloc[0]['sec_period']
+        
+        # 브랜드 컬럼이 없으면 기본값 추가
+        if '브랜드' not in assignment_update_data.columns:
+            assignment_update_data['브랜드'] = 'MLB'  # 기본값
+        
+        # 집행URL 컬럼이 없으면 빈 값으로 추가
+        if '집행URL' not in assignment_update_data.columns:
+            assignment_update_data['집행URL'] = ''
+        
+        update_assignment_history(assignment_update_data, df)
     
     # 실집행수 데이터 업데이트 (브랜드_실집행수 컬럼이 있는 경우에만)
     if '브랜드_실집행수' in uploaded_data.columns:
@@ -1685,6 +1741,9 @@ def process_uploaded_data(uploaded_data, df):
         execution_update_data = pd.DataFrame()
     
     st.success(f"✅ {len(assignment_update_data)}개의 배정 데이터와 {len(execution_update_data)}개의 실집행수 데이터가 업로드되었습니다!")
+    
+    # 사용자가 알림을 읽을 수 있도록 3초 대기
+    time.sleep(3)
     
     # 미리보기
     st.markdown("**업로드된 배정 데이터 미리보기:**")
@@ -1705,18 +1764,23 @@ def update_assignment_history(assignment_update_data, df=None):
     else:
         existing_assignment_data = pd.DataFrame(columns=["브랜드", "ID", "이름", "배정월", "집행URL"])
     
-    # ID만 입력된 경우 자동으로 이름, 팔로워, 계약수 등의 정보 채우기
+    # ID만 입력된 경우 자동으로 이름, 팔로워, 계약수 등의 정보 채우기 (process_uploaded_data에서 이미 처리된 경우 제외)
     if df is not None:
         for idx, row in assignment_update_data.iterrows():
-            if pd.isna(row['이름']) or row['이름'] == "":
+            # 이름이 비어있거나 FLW가 비어있는 경우에만 자동 채우기
+            if (pd.isna(row['이름']) or row['이름'] == "") or ('FLW' in assignment_update_data.columns and (pd.isna(row['FLW']) or row['FLW'] == "")):
                 # ID로 인플루언서 정보 찾기
                 influencer_info = df[df['id'] == row['ID']]
                 if not influencer_info.empty:
-                    assignment_update_data.loc[idx, '이름'] = influencer_info.iloc[0]['name']
-                    # FLW 컬럼이 없으면 추가
+                    # 이름이 비어있으면 채우기
+                    if pd.isna(row['이름']) or row['이름'] == "":
+                        assignment_update_data.loc[idx, '이름'] = influencer_info.iloc[0]['name']
+                    
+                    # FLW 컬럼이 없으면 추가하고 채우기
                     if 'FLW' not in assignment_update_data.columns:
                         assignment_update_data['FLW'] = ""
-                    assignment_update_data.loc[idx, 'FLW'] = influencer_info.iloc[0]['follower']
+                    if pd.isna(assignment_update_data.loc[idx, 'FLW']) or assignment_update_data.loc[idx, 'FLW'] == "":
+                        assignment_update_data.loc[idx, 'FLW'] = influencer_info.iloc[0]['follower']
                     
                     # 브랜드별 계약수 추가
                     brand_qty_col = f"{row['브랜드'].lower()}_qty"
@@ -1734,6 +1798,11 @@ def update_assignment_history(assignment_update_data, df=None):
                     if '2차활용' not in assignment_update_data.columns:
                         assignment_update_data['2차활용'] = ""
                     assignment_update_data.loc[idx, '2차활용'] = influencer_info.iloc[0]['sec_usage']
+                    
+                    # 2차기간 추가
+                    if '2차기간' not in assignment_update_data.columns:
+                        assignment_update_data['2차기간'] = ""
+                    assignment_update_data.loc[idx, '2차기간'] = influencer_info.iloc[0]['sec_period']
     
     combined_assignment_data = pd.concat([existing_assignment_data, assignment_update_data], ignore_index=True)
     combined_assignment_data = combined_assignment_data.drop_duplicates(subset=['ID', '브랜드', '배정월'], keep='last')
