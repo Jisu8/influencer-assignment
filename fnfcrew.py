@@ -341,15 +341,15 @@ def add_execution_data(df, execution_file=EXECUTION_FILE):
         execution_data = pd.read_csv(execution_file, encoding="utf-8")
         if not execution_data.empty:
             # 브랜드별 실행수 계산
-            brand_execution = execution_data.groupby(["ID", "브랜드"])["실제집행수"].sum().reset_index()
-            brand_execution.columns = ["ID", "브랜드", "브랜드_실집행수"]
+            brand_execution = execution_data.groupby(["id", "브랜드"])["실제집행수"].sum().reset_index()
+            brand_execution.columns = ["id", "브랜드", "브랜드_실집행수"]
             
             # 기존 컬럼이 있으면 제거
             if "브랜드_실집행수" in df.columns:
                 df = df.drop("브랜드_실집행수", axis=1)
             
             # 병합
-            df = df.merge(brand_execution, on=["ID", "브랜드"], how="left")
+            df = df.merge(brand_execution, on=["id", "브랜드"], how="left")
             df["브랜드_실집행수"] = df["브랜드_실집행수"].fillna(0)
             
             # 잔여수 재계산
@@ -547,7 +547,7 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
     if not selected_month_assignments.empty:
         for _, row in selected_month_assignments.iterrows():
             brand = row['브랜드']
-            influencer_id = row['ID']
+            influencer_id = row['id']
             influencer_name = row['이름']
             if brand not in existing_brand_assignments:
                 existing_brand_assignments[brand] = []
@@ -988,7 +988,7 @@ def render_assignment_results_tab(month_options, df):
                 all_results = all_results[all_results["브랜드"] == selected_brand_filter]
             
             # 컬럼 순서 정리
-            expected_columns = ["브랜드", "ID", "이름", "배정월", "FLW", "브랜드_계약수", 
+            expected_columns = ["브랜드", "id", "이름", "배정월", "FLW", "브랜드_계약수", 
                               "브랜드_실집행수", "브랜드_잔여수", "전체_계약수", "전체_잔여수"]
             all_results = reorder_columns(all_results, expected_columns)
             
@@ -1237,8 +1237,8 @@ def render_data_editor(all_results_with_checkbox):
                 help="브랜드명",
                 max_chars=None
             ),
-            "ID": st.column_config.TextColumn(
-                "ID",
+                    "id": st.column_config.TextColumn(
+            "id",
                 help="인플루언서 ID",
                 max_chars=None
             ),
@@ -1792,7 +1792,7 @@ def update_assignment_history(assignment_update_data, df=None):
         if '집행URL' not in existing_assignment_data.columns:
             existing_assignment_data['집행URL'] = ""
     else:
-        existing_assignment_data = pd.DataFrame(columns=["브랜드", "ID", "이름", "배정월", "집행URL"])
+        existing_assignment_data = pd.DataFrame(columns=["브랜드", "id", "이름", "배정월", "집행URL"])
     
     # ID만 입력된 경우 자동으로 이름, 팔로워, 계약수 등의 정보 채우기 (process_uploaded_data에서 이미 처리된 경우 제외)
     if df is not None:
@@ -1844,7 +1844,7 @@ def update_execution_history(execution_update_data):
     if os.path.exists(EXECUTION_FILE):
         existing_execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
     else:
-        existing_execution_data = pd.DataFrame(columns=["ID", "이름", "브랜드", "배정월", "실제집행수"])
+        existing_execution_data = pd.DataFrame(columns=["id", "이름", "브랜드", "배정월", "실제집행수"])
     
     combined_execution_data = pd.concat([existing_execution_data, execution_update_data], ignore_index=True)
     combined_execution_data = combined_execution_data.drop_duplicates(subset=['id', '브랜드', '배정월'], keep='last')
@@ -1908,7 +1908,7 @@ def prepare_influencer_summary(df, selected_brand_filter, selected_season_filter
     
     # 컬럼명 변경
     influencer_summary = influencer_summary.rename(columns={
-        "id": "ID", "name": "이름", "follower": "FLW", "unit_fee": "1회계약단가", "sec_usage": "2차활용", "sec_period": "2차기간"
+        "id": "id", "name": "이름", "follower": "FLW", "unit_fee": "1회계약단가", "sec_usage": "2차활용", "sec_period": "2차기간"
     })
     
     # 전체 필터에서도 전체_계약수, 전체_집행수, 전체_잔여수 컬럼 유지 (2차활용 오른쪽에 위치)
@@ -2052,7 +2052,7 @@ def add_monthly_columns(influencer_summary, df, selected_brand_filter):
             
             # 인플루언서별, 월별로 브랜드 집계
             for _, row in influencer_summary.iterrows():
-                influencer_id = row["ID"]
+                influencer_id = row["id"]
                 for month in months:
                     # 해당 인플루언서의 해당 월 집행 내역
                     month_executions = completed_executions[
@@ -2125,8 +2125,8 @@ def get_influencer_column_config():
             help="순서 번호",
             format="%d"
         ),
-        "ID": st.column_config.TextColumn(
-            "ID",
+        "id": st.column_config.TextColumn(
+            "id",
             help="인플루언서 ID",
             max_chars=None
         ),
