@@ -26,12 +26,32 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        # Check if there are any changes in data files
-        if [[ -n $(git status --porcelain data/*.csv) ]]; then
-          echo "Data files have been modified, committing changes..."
-          git add data/*.csv
-          git commit -m "Auto-sync data: ${{ github.event.client_payload.message }}"
-          git push
+        # Create data directory if it doesn't exist
+        mkdir -p data
+        
+        # Check if data files exist and have content
+        if [[ -f data/assignment_history.csv ]] && [[ -s data/assignment_history.csv ]]; then
+          echo "Data files exist and have content, checking for changes..."
+          
+          # Check if there are any changes in data files
+          if [[ -n $(git status --porcelain data/*.csv) ]]; then
+            echo "Data files have been modified, committing changes..."
+            git add data/*.csv
+            git commit -m "Auto-sync data: ${{ github.event.client_payload.message }}"
+            git push
+          else
+            echo "No data file changes to commit"
+          fi
         else
-          echo "No data file changes to commit"
+          echo "Data files do not exist or are empty"
+          # Create empty data files if they don't exist
+          if [[ ! -f data/assignment_history.csv ]]; then
+            echo "브랜드,id,이름,배정월,FLW,브랜드_계약수,브랜드_실집행수,브랜드_잔여수,전체_계약수,전체_실집행수,전체_잔여수,집행URL" > data/assignment_history.csv
+          fi
+          if [[ ! -f data/execution_status.csv ]]; then
+            echo "id,이름,브랜드,배정월,실제집행수" > data/execution_status.csv
+          fi
+          git add data/*.csv
+          git commit -m "Initialize empty data files"
+          git push
         fi

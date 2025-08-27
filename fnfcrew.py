@@ -15,9 +15,29 @@ def is_running_on_streamlit_cloud():
     cloud_indicators = [
         'STREAMLIT_SERVER_HEADLESS',
         'STREAMLIT_SERVER_PORT',
-        'STREAMLIT_SERVER_ADDRESS'
+        'STREAMLIT_SERVER_ADDRESS',
+        'STREAMLIT_CLOUD_ENVIRONMENT',
+        'STREAMLIT_SERVER_RUN_ON_SAVE',
+        'STREAMLIT_SERVER_FILE_WATCHER_TYPE'
     ]
-    return any(os.environ.get(indicator) for indicator in cloud_indicators)
+    
+    # 추가로 Streamlit Cloud의 특정 경로나 설정 확인
+    cloud_path_indicators = [
+        '/app',
+        '/home/appuser',
+        '/opt/streamlit'
+    ]
+    
+    # 환경변수 확인
+    env_check = any(os.environ.get(indicator) for indicator in cloud_indicators)
+    
+    # 경로 확인
+    path_check = any(os.path.exists(path) for path in cloud_path_indicators)
+    
+    # 디버깅을 위한 로그 출력
+    st.sidebar.info(f"🔍 환경 감지: env_check={env_check}, path_check={path_check}")
+    
+    return env_check or path_check
 
 # =============================================================================
 # 파일 경로 설정
@@ -47,6 +67,10 @@ def trigger_github_workflow(commit_message="Auto-update data files"):
         repo_owner = st.secrets.get("GITHUB_REPO_OWNER", "jisu8")
         repo_name = st.secrets.get("GITHUB_REPO_NAME", "influencer-assignment")
         
+        # 디버깅 정보 출력
+        st.sidebar.info(f"🔧 GitHub 설정: owner={repo_owner}, repo={repo_name}")
+        st.sidebar.info(f"🔑 토큰 존재: {'예' if github_token else '아니오'}")
+        
         if not github_token:
             st.warning("⚠️ GitHub 토큰이 설정되지 않았습니다. 로컬에만 저장됩니다.")
             return False
@@ -65,13 +89,23 @@ def trigger_github_workflow(commit_message="Auto-update data files"):
             }
         }
         
+        st.sidebar.info(f"🌐 API 호출: {url}")
+        
         response = requests.post(url, headers=headers, json=data)
+        
+        st.sidebar.info(f"📡 응답 코드: {response.status_code}")
         
         if response.status_code == 204:
             st.success("✅ GitHub에 데이터가 자동 동기화되었습니다!")
             return True
         else:
             st.error(f"❌ GitHub 동기화 실패: {response.status_code}")
+            if response.status_code == 401:
+                st.error("인증 실패: GitHub 토큰을 확인해주세요.")
+            elif response.status_code == 404:
+                st.error("저장소를 찾을 수 없습니다: 저장소 이름을 확인해주세요.")
+            elif response.status_code == 403:
+                st.error("권한이 없습니다: 토큰 권한을 확인해주세요.")
             return False
             
     except Exception as e:
