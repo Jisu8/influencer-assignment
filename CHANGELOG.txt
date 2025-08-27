@@ -471,3 +471,31 @@ cols.insert(위치, "컬럼명")
 - GitHub Actions 기반 동기화는 Streamlit Cloud 환경에서 불안정할 수 있음
 
 **변경 완료 상태:** 📝 기록 완료
+
+---
+
+### 2025-08-27 Git 추적 문제 해결
+
+**변경 내용:**
+- `.gitignore`에서 `data/assignment_history.csv`와 `data/execution_status.csv` 제거 (주석 처리)
+- 데이터 파일들을 다시 Git 추적에 추가
+- `git add data/assignment_history.csv data/execution_status.csv` 실행
+- 데이터 파일 Git 추적 복구
+
+**변경 이유:**
+- 사용자 보고: "오전에 이부분 다 수정 변경 했는데 언제 다시 돌아간거야?"
+- `.gitignore`에 데이터 파일들이 추가되어 Git 추적에서 제외됨
+- `git rm --cached`로 인해 로컬 수정사항이 Git에 반영되지 않음
+- 데이터 파일의 컬럼명 변경(`ID` → `id`)이 Git에 저장되지 않음
+
+**영향받는 기능:**
+- 데이터 파일의 Git 버전 관리
+- 로컬 수정사항의 GitHub 동기화
+- 데이터 파일 컬럼명 변경사항 유지
+
+**검증 방법:**
+- `git status`로 데이터 파일들이 추적되고 있는지 확인
+- GitHub에서 데이터 파일의 컬럼명이 `id`로 변경되었는지 확인
+- 로컬 수정사항이 Git에 정상적으로 반영되는지 확인
+
+**변경 완료 상태:** ✅ 완료
