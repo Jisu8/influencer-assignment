@@ -26,8 +26,8 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        # Check if data files have been modified
-        if git diff --name-only HEAD~1 | grep -E "data/.*\.csv"; then
+        # Check if there are any changes in data files
+        if [[ -n $(git status --porcelain data/*.csv) ]]; then
           echo "Data files have been modified, committing changes..."
           git add data/*.csv
           git commit -m "Auto-sync data: ${{ github.event.client_payload.message }}"
