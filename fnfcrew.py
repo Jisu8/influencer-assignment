@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import time
 import io
+import subprocess
 from datetime import datetime
 import requests
 import json
@@ -180,26 +181,6 @@ def check_github_connection():
             
     except Exception as e:
         st.sidebar.error(f"❌ GitHub 연결 확인 중 오류: {e}")
-        return False
-
-def save_with_auto_sync(data, file_path, sheet_name, commit_message=None):
-    """데이터 저장 후 Google Sheets와 로컬 백업에 동기화"""
-    try:
-        # 로컬 백업 저장
-        data.to_csv(file_path, index=False, encoding="utf-8")
-        
-        # Google Sheets에 저장
-        success = save_data_to_sheets(data, sheet_name)
-        
-        if success:
-            st.success(f"✅ 데이터가 Google Sheets와 로컬에 저장되었습니다!")
-        else:
-            st.warning("⚠️ Google Sheets 저장에 실패했습니다. 로컬 백업만 저장되었습니다.")
-        
-        return success
-        
-    except Exception as e:
-        st.error(f"❌ 데이터 저장 중 오류가 발생했습니다: {e}")
         return False
 
 # =============================================================================
@@ -423,6 +404,24 @@ def load_influencer_data():
     else:
         st.error("인플루언서 데이터 파일이 없습니다.")
         return None
+
+def pull_latest_data_from_github():
+    """GitHub에서 최신 데이터 가져오기"""
+    try:
+        # Git pull 실행
+        result = subprocess.run(['git', 'pull', 'origin', 'master'], 
+                              capture_output=True, text=True, cwd=SCRIPT_DIR)
+        
+        if result.returncode == 0:
+            st.success("✅ GitHub에서 최신 데이터를 가져왔습니다!")
+            return True
+        else:
+            st.warning(f"⚠️ GitHub에서 데이터 가져오기 실패: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        st.warning(f"⚠️ GitHub 데이터 가져오기 중 오류: {e}")
+        return False
 
 def load_assignment_history():
     """배정 이력 로드"""
@@ -845,6 +844,10 @@ def render_sidebar(df):
     st.sidebar.markdown("<hr style='margin: 10px 0; border: 0.5px solid #666;'>", unsafe_allow_html=True)
     if st.sidebar.button("🔗 연결 상태 확인", key="sync_check", use_container_width=True):
         check_github_connection()
+    
+    # GitHub에서 최신 데이터 가져오기
+    if st.sidebar.button("📥 최신 데이터 가져오기", key="pull_data", use_container_width=True):
+        pull_latest_data_from_github()
     
     return selected_month, selected_season, month_options
 
@@ -2285,6 +2288,12 @@ def main():
     load_css()
     
     st.title("🎯 인플루언서 배정 앱")
+    
+    # 앱 시작 시 GitHub에서 최신 데이터 가져오기
+    if 'data_synced' not in st.session_state:
+        with st.spinner("🔄 GitHub에서 최신 데이터를 가져오는 중..."):
+            pull_latest_data_from_github()
+        st.session_state.data_synced = True
     
     # 새로고침 시 전체 선택 상태 초기화
     st.session_state.select_all = False
