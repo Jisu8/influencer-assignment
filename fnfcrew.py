@@ -1127,6 +1127,10 @@ def render_table_controls(all_results_with_checkbox):
                 st.session_state.select_all = True
             else:
                 st.session_state.select_all = not st.session_state.select_all
+            # 전체 선택 상태 변경 후 데이터 에디터 키를 변경하여 강제 새로고침
+            if 'data_editor_key' not in st.session_state:
+                st.session_state.data_editor_key = 0
+            st.session_state.data_editor_key += 1
             st.rerun()
     
     with col2:
@@ -1167,11 +1171,14 @@ def render_data_editor(all_results_with_checkbox):
     # 전체 선택 상태에 따라 체크박스 기본값 설정
     default_checked = st.session_state.get('select_all', False)
     
+    # 데이터 에디터 키를 동적으로 생성하여 강제 새로고침
+    editor_key = f"assignment_data_editor_{st.session_state.get('data_editor_key', 0)}"
+    
     return st.data_editor(
         all_results_with_checkbox,
         use_container_width=True,
         hide_index=True,
-        key="assignment_data_editor",
+        key=editor_key,
         column_config={
             "선택": st.column_config.CheckboxColumn(
                 "선택",
