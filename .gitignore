@@ -134,4 +134,8 @@ treamlit run fnfcrew.py
 data/*_backup.csv
 data/*_old.csv
 data/*backup*
-data/*old* 
+data/*old*
+
+# Local data files (prevent local test data from being pushed to GitHub)
+data/assignment_history.csv
+data/execution_status.csv 
