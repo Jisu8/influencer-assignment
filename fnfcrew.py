@@ -622,9 +622,14 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
     # 결과 저장
     if results:
         save_assignments(results, existing_history)
+        st.success(f"✅ {selected_month}에 {len(results)}개의 배정이 완료되었습니다!")
+        # 사용자가 알림을 읽을 수 있도록 3초 대기
+        time.sleep(3)
         st.rerun()
     else:
         st.warning(f"⚠️ {selected_month}에 배정할 수 있는 인플루언서가 없습니다.")
+        # 사용자가 알림을 읽을 수 있도록 3초 대기
+        time.sleep(3)
 
 def create_assignment_info(row, brand, selected_month, df):
     """배정 정보 생성"""
