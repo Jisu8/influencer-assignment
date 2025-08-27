@@ -75,8 +75,6 @@ def update_file_via_github_api(file_path, content, commit_message):
             "Accept": "application/vnd.github.v3+json"
         }
         
-
-        
         # 현재 파일의 SHA 가져오기 (파일이 존재하는 경우)
         response = requests.get(url, headers=headers)
         sha = None
@@ -139,8 +137,7 @@ def save_with_auto_sync(data, file_path, commit_message=None):
             sync_success = update_file_via_github_api(relative_path, content, commit_message)
             
             if not sync_success:
-                st.warning("⚠️ GitHub 업데이트에 실패했습니다. 로컬에는 저장되었지만 GitHub 동기화가 되지 않았습니다.")
-                st.info("💡 GitHub 동기화 상태 확인 버튼을 눌러서 문제를 확인해보세요.")
+                st.warning("⚠️ GitHub 업데이트에 실패했습니다. 수동으로 데이터를 백업해주세요.")
         else:
             # 로컬에서는 동기화 없이 저장만
             st.info("💾 로컬에 저장되었습니다. (GitHub 동기화는 클라우드에서만 실행됩니다)")
@@ -198,26 +195,10 @@ def auto_push_to_github(commit_message="Auto-update data files"):
             
             # 원격 변경사항 먼저 가져오기 (충돌 방지)
             try:
-                # 먼저 fetch로 원격 변경사항 확인
-                fetch_result = subprocess.run(['git', 'fetch', 'origin'], 
+                pull_result = subprocess.run(['git', 'pull', 'origin', 'master'], 
                                            cwd=SCRIPT_DIR, capture_output=True, text=True)
-                
-                # 로컬과 원격의 차이 확인
-                status_result = subprocess.run(['git', 'status', '--porcelain'], 
-                                            cwd=SCRIPT_DIR, capture_output=True, text=True)
-                
-                if status_result.stdout.strip():
-                    # 로컬에 변경사항이 있으면 pull 시도
-                    pull_result = subprocess.run(['git', 'pull', 'origin', 'master'], 
-                                               cwd=SCRIPT_DIR, capture_output=True, text=True)
-                    if pull_result.returncode != 0:
-                        print(f"Git pull warning: {pull_result.stderr}")
-                        # 충돌이 있으면 reset 후 다시 시도
-                        subprocess.run(['git', 'reset', '--hard', 'HEAD'], 
-                                     cwd=SCRIPT_DIR, capture_output=True, text=True)
-                        subprocess.run(['git', 'pull', 'origin', 'master'], 
-                                     cwd=SCRIPT_DIR, capture_output=True, text=True)
-                        
+                if pull_result.returncode != 0:
+                    print(f"Git pull warning: {pull_result.stderr}")
             except Exception as e:
                 print(f"Git pull error: {e}")
             
@@ -1929,8 +1910,8 @@ def handle_excel_upload(uploaded_file, df):
         else:
             uploaded_data = pd.read_excel(uploaded_file, engine='xlrd')
         
-        # 필수 컬럼만 검증 (id, 브랜드, 배정월, 결과만 필수, 나머지는 선택사항)
-        required_columns = ['id', '브랜드', '배정월', '결과']
+        # 필수 컬럼만 검증 (id, 배정월, 결과만 필수, 나머지는 선택사항)
+        required_columns = ['id', '배정월', '결과']
         missing_columns = [col for col in required_columns if col not in uploaded_data.columns]
         
         if missing_columns:
@@ -1944,7 +1925,7 @@ def handle_excel_upload(uploaded_file, df):
 def process_uploaded_data(uploaded_data, df):
     """업로드된 데이터 처리"""
     # 필수 컬럼 확인
-    required_columns = ['id', '브랜드', '배정월', '결과']
+    required_columns = ['id', '배정월', '결과']
     
     # 필수 컬럼이 있으면 처리 진행
     if all(col in uploaded_data.columns for col in required_columns):
@@ -1959,9 +1940,14 @@ def process_uploaded_data(uploaded_data, df):
                 invalid_assignments.append(f"ID '{row['id']}'를 찾을 수 없습니다.")
                 continue
             
-            # 브랜드 필수 확인
-            brand = row['브랜드']  # 브랜드는 필수이므로 기본값 없음
+            # 브랜드 확인 (기본값: MLB)
+            brand = row.get('브랜드', 'MLB')
             brand_qty_col = f"{brand.lower()}_qty"
+            
+            # 계약수 확인
+            if brand_qty_col not in df.columns or influencer_info.iloc[0][brand_qty_col] <= 0:
+                invalid_assignments.append(f"'{row['id']}'의 {brand} 브랜드 계약수가 없습니다.")
+                continue
             
             # 유효한 배정 데이터로 추가
             assignment_row = row.copy()
@@ -1972,11 +1958,8 @@ def process_uploaded_data(uploaded_data, df):
             assignment_row['1회계약단가'] = influencer_info.iloc[0]['unit_fee']
             assignment_row['2차활용'] = influencer_info.iloc[0]['sec_usage']
             assignment_row['2차기간'] = influencer_info.iloc[0]['sec_period']
-            # 브랜드 계약수 자동 채우기 (ID 기반)
-            if brand_qty_col in df.columns:
-                assignment_row['브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
-            else:
-                assignment_row['브랜드_계약수'] = ""
+            assignment_row['브랜드'] = brand
+            assignment_row['브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
             
             # 집행URL 컬럼이 없으면 빈 값으로 추가
             if '집행URL' not in assignment_row:
@@ -2009,10 +1992,20 @@ def process_uploaded_data(uploaded_data, df):
     else:
         execution_update_data = pd.DataFrame()
     
-    # 성공 메시지 생성
-    success_message = f"✅ {len(assignment_update_data)}개의 배정 데이터가 업로드되었습니다."
+    # 업데이트된 배정 데이터 수 계산
+    updated_count = len([row for row in assignment_update_data.iterrows() if 
+                        any((existing_assignment_data['id'] == row[1]['id']) & 
+                            (existing_assignment_data['브랜드'] == row[1]['브랜드']) & 
+                            (existing_assignment_data['배정월'] == row[1]['배정월']))])
+    new_count = len(assignment_update_data) - updated_count
+    
+    success_message = f"✅ "
+    if new_count > 0:
+        success_message += f"{new_count}개의 새로운 배정 데이터가 추가되었습니다. "
+    if updated_count > 0:
+        success_message += f"{updated_count}개의 기존 배정 데이터가 업데이트되었습니다. "
     if len(execution_update_data) > 0:
-        success_message += f" {len(execution_update_data)}개의 실집행수 데이터가 업로드되었습니다."
+        success_message += f"{len(execution_update_data)}개의 실집행수 데이터가 업로드되었습니다."
     
     st.success(success_message)
     
@@ -2056,17 +2049,16 @@ def update_assignment_history(assignment_update_data, df=None):
             # 새로운 데이터는 추가
             new_data.append(new_row)
     
-    # 기존 데이터에서 업데이트할 행들을 제거
-    for _, new_row in assignment_update_data.iterrows():
-        existing_mask = (
-            (existing_assignment_data['id'] == new_row['id']) &
-            (existing_assignment_data['브랜드'] == new_row['브랜드']) &
-            (existing_assignment_data['배정월'] == new_row['배정월'])
+    # 기존 데이터에서 업데이트되지 않은 데이터 유지
+    updated_ids = [(row['id'], row['브랜드'], row['배정월']) for row in updated_data]
+    remaining_data = existing_assignment_data[
+        ~existing_assignment_data.apply(
+            lambda row: (row['id'], row['브랜드'], row['배정월']) in updated_ids, axis=1
         )
-        existing_assignment_data = existing_assignment_data[~existing_mask]
+    ]
     
-    # 모든 데이터 병합 (기존 데이터 + 업데이트된 데이터 + 새로운 데이터)
-    combined_assignment_data = pd.concat([existing_assignment_data, pd.DataFrame(updated_data), pd.DataFrame(new_data)], ignore_index=True)
+    # 모든 데이터 병합
+    combined_assignment_data = pd.concat([remaining_data, pd.DataFrame(updated_data), pd.DataFrame(new_data)], ignore_index=True)
     
     # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
     if is_running_on_streamlit_cloud():
