@@ -96,8 +96,7 @@ def save_with_auto_sync(data, file_path, commit_message=None):
 # 기존 파일 경로 설정 (로컬 백업용)
 # =============================================================================
 
-# 현재 스크립트의 디렉토리를 기준으로 상대 경로 설정
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# SCRIPT_DIR은 이미 위에서 정의됨
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 
 # 데이터 파일 경로 (로컬 백업용)
@@ -1118,7 +1117,7 @@ def render_table_controls(all_results_with_checkbox):
     col1, col2, col3, col_spacer, col4 = st.columns([0.15, 0.15, 0.15, 0.1, 0.45])
     
     with col1:
-        # 전체 선택 상태에 따라 버튼 텍스트 변경 (이미지 요청에 따라 체크 아이콘 사용)
+        # 전체 선택 상태에 따라 버튼 텍스트 변경
         select_all_state = st.session_state.get('select_all', False)
         button_text = "✅ 전체선택" if not select_all_state else "✅ 전체해제"
         
@@ -1127,10 +1126,12 @@ def render_table_controls(all_results_with_checkbox):
                 st.session_state.select_all = True
             else:
                 st.session_state.select_all = not st.session_state.select_all
-            # 전체 선택 상태 변경 후 데이터 에디터 키를 변경하여 강제 새로고침
+            
+            # 데이터 에디터 키를 변경하여 강제 새로고침
             if 'data_editor_key' not in st.session_state:
                 st.session_state.data_editor_key = 0
             st.session_state.data_editor_key += 1
+            
             st.rerun()
     
     with col2:
@@ -1171,7 +1172,7 @@ def render_data_editor(all_results_with_checkbox):
     # 전체 선택 상태에 따라 체크박스 기본값 설정
     default_checked = st.session_state.get('select_all', False)
     
-    # 데이터 에디터 키를 동적으로 생성하여 강제 새로고침
+    # 동적 키 생성
     editor_key = f"assignment_data_editor_{st.session_state.get('data_editor_key', 0)}"
     
     return st.data_editor(
