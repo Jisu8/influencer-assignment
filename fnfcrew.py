@@ -193,6 +193,15 @@ def auto_push_to_github(commit_message="Auto-update data files"):
             subprocess.run(['git', 'commit', '-m', commit_message], 
                          cwd=SCRIPT_DIR, check=True)
             
+            # 원격 변경사항 먼저 가져오기 (충돌 방지)
+            try:
+                pull_result = subprocess.run(['git', 'pull', 'origin', 'master'], 
+                                           cwd=SCRIPT_DIR, capture_output=True, text=True)
+                if pull_result.returncode != 0:
+                    print(f"Git pull warning: {pull_result.stderr}")
+            except Exception as e:
+                print(f"Git pull error: {e}")
+            
             # 푸시 (더 강력한 에러 처리)
             push_result = subprocess.run(['git', 'push', 'origin', 'master'], 
                                        cwd=SCRIPT_DIR, capture_output=True, text=True)
