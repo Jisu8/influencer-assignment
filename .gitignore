@@ -137,5 +137,5 @@ data/*backup*
 data/*old*
 
 # Local data files (prevent local test data from being pushed to GitHub)
-data/assignment_history.csv
-data/execution_status.csv 
+# data/assignment_history.csv
+# data/execution_status.csv 
