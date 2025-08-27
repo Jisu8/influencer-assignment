@@ -57,11 +57,14 @@ def trigger_github_workflow(commit_message="Auto-update data files"):
         response = requests.post(url, headers=headers, json=data)
         
         if response.status_code == 204:
+            st.success("✅ GitHub에 데이터가 자동 동기화되었습니다!")
             return True
         else:
+            st.error(f"❌ GitHub 동기화 실패: {response.status_code}")
             return False
             
     except Exception as e:
+        st.error(f"❌ GitHub 동기화 중 오류: {e}")
         return False
 
 def save_with_auto_sync(data, file_path, commit_message=None):
@@ -75,8 +78,11 @@ def save_with_auto_sync(data, file_path, commit_message=None):
             filename = os.path.basename(file_path)
             commit_message = f"Auto-update {filename}"
         
-        # GitHub Actions 트리거 (조용히)
-        trigger_github_workflow(commit_message)
+        # GitHub Actions 트리거
+        sync_success = trigger_github_workflow(commit_message)
+        
+        if not sync_success:
+            st.warning("⚠️ GitHub 동기화에 실패했습니다. 수동으로 데이터를 백업해주세요.")
         
         return True
         
@@ -393,7 +399,7 @@ def load_influencer_data():
         return None
 
 def pull_latest_data_from_github(show_in_sidebar=False):
-    """GitHub에서 최신 데이터 가져오기 (코드와 필수 데이터 구조만)"""
+    """GitHub에서 최신 데이터 가져오기"""
     try:
         # Git pull 실행
         result = subprocess.run(['git', 'pull', 'origin', 'master'], 
@@ -401,22 +407,22 @@ def pull_latest_data_from_github(show_in_sidebar=False):
         
         if result.returncode == 0:
             if show_in_sidebar:
-                st.sidebar.success("✅ GitHub에서 최신 코드를 가져왔습니다!")
+                st.sidebar.success("✅ GitHub에서 최신 데이터를 가져왔습니다!")
             else:
-                st.success("✅ GitHub에서 최신 코드를 가져왔습니다!")
+                st.success("✅ GitHub에서 최신 데이터를 가져왔습니다!")
             return True
         else:
             if show_in_sidebar:
-                st.sidebar.warning(f"⚠️ GitHub에서 코드 가져오기 실패: {result.stderr}")
+                st.sidebar.warning(f"⚠️ GitHub에서 데이터 가져오기 실패: {result.stderr}")
             else:
-                st.warning(f"⚠️ GitHub에서 코드 가져오기 실패: {result.stderr}")
+                st.warning(f"⚠️ GitHub에서 데이터 가져오기 실패: {result.stderr}")
             return False
             
     except Exception as e:
         if show_in_sidebar:
-            st.sidebar.warning(f"⚠️ GitHub 코드 가져오기 중 오류: {e}")
+            st.sidebar.warning(f"⚠️ GitHub 데이터 가져오기 중 오류: {e}")
         else:
-            st.warning(f"⚠️ GitHub 코드 가져오기 중 오류: {e}")
+            st.warning(f"⚠️ GitHub 데이터 가져오기 중 오류: {e}")
         return False
 
 def load_assignment_history():
@@ -820,9 +826,9 @@ def render_sidebar(df):
     # 선택된 월을 session_state에 저장
     st.session_state.selected_month = selected_month
     
-    # 코드 동기화 (사이드바 맨 하단에 배치)
+    # 데이터 동기화 (사이드바 맨 하단에 배치)
     st.sidebar.markdown("<hr style='margin: 10px 0; border: 0.5px solid #666;'>", unsafe_allow_html=True)
-    if st.sidebar.button("🔄 코드동기화", key="data_sync", use_container_width=True):
+    if st.sidebar.button("🔄 데이터동기화", key="data_sync", use_container_width=True):
         # 연결 상태 확인
         connection_status = check_github_connection()
         
