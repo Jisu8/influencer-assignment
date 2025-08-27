@@ -75,6 +75,8 @@ def update_file_via_github_api(file_path, content, commit_message):
             "Accept": "application/vnd.github.v3+json"
         }
         
+
+        
         # 현재 파일의 SHA 가져오기 (파일이 존재하는 경우)
         response = requests.get(url, headers=headers)
         sha = None
@@ -137,7 +139,8 @@ def save_with_auto_sync(data, file_path, commit_message=None):
             sync_success = update_file_via_github_api(relative_path, content, commit_message)
             
             if not sync_success:
-                st.warning("⚠️ GitHub 업데이트에 실패했습니다. 수동으로 데이터를 백업해주세요.")
+                st.warning("⚠️ GitHub 업데이트에 실패했습니다. 로컬에는 저장되었지만 GitHub 동기화가 되지 않았습니다.")
+                st.info("💡 GitHub 동기화 상태 확인 버튼을 눌러서 문제를 확인해보세요.")
         else:
             # 로컬에서는 동기화 없이 저장만
             st.info("💾 로컬에 저장되었습니다. (GitHub 동기화는 클라우드에서만 실행됩니다)")
@@ -2053,16 +2056,17 @@ def update_assignment_history(assignment_update_data, df=None):
             # 새로운 데이터는 추가
             new_data.append(new_row)
     
-    # 기존 데이터에서 업데이트되지 않은 데이터 유지
-    updated_ids = [(row['id'], row['브랜드'], row['배정월']) for row in updated_data]
-    remaining_data = existing_assignment_data[
-        ~existing_assignment_data.apply(
-            lambda row: (row['id'], row['브랜드'], row['배정월']) in updated_ids, axis=1
+    # 기존 데이터에서 업데이트할 행들을 제거
+    for _, new_row in assignment_update_data.iterrows():
+        existing_mask = (
+            (existing_assignment_data['id'] == new_row['id']) &
+            (existing_assignment_data['브랜드'] == new_row['브랜드']) &
+            (existing_assignment_data['배정월'] == new_row['배정월'])
         )
-    ]
+        existing_assignment_data = existing_assignment_data[~existing_mask]
     
-    # 모든 데이터 병합
-    combined_assignment_data = pd.concat([remaining_data, pd.DataFrame(updated_data), pd.DataFrame(new_data)], ignore_index=True)
+    # 모든 데이터 병합 (기존 데이터 + 업데이트된 데이터 + 새로운 데이터)
+    combined_assignment_data = pd.concat([existing_assignment_data, pd.DataFrame(updated_data), pd.DataFrame(new_data)], ignore_index=True)
     
     # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
     if is_running_on_streamlit_cloud():
