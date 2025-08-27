@@ -34,9 +34,6 @@ def is_running_on_streamlit_cloud():
     # 경로 확인
     path_check = any(os.path.exists(path) for path in cloud_path_indicators)
     
-    # 디버깅을 위한 로그 출력
-    st.sidebar.info(f"🔍 환경 감지: env_check={env_check}, path_check={path_check}")
-    
     return env_check or path_check
 
 # =============================================================================
@@ -67,10 +64,6 @@ def update_file_via_github_api(file_path, content, commit_message):
         repo_owner = st.secrets.get("GITHUB_REPO_OWNER", "jisu8")
         repo_name = st.secrets.get("GITHUB_REPO_NAME", "influencer-assignment")
         
-        # 디버깅 정보 출력
-        st.sidebar.info(f"🔧 GitHub 설정: owner={repo_owner}, repo={repo_name}")
-        st.sidebar.info(f"🔑 토큰 존재: {'예' if github_token else '아니오'}")
-        
         if not github_token:
             st.warning("⚠️ GitHub 토큰이 설정되지 않았습니다. 로컬에만 저장됩니다.")
             return False
@@ -82,17 +75,12 @@ def update_file_via_github_api(file_path, content, commit_message):
             "Accept": "application/vnd.github.v3+json"
         }
         
-        st.sidebar.info(f"🌐 API 호출: {url}")
-        
         # 현재 파일의 SHA 가져오기 (파일이 존재하는 경우)
         response = requests.get(url, headers=headers)
         sha = None
         if response.status_code == 200:
             current_file = response.json()
             sha = current_file['sha']
-            st.sidebar.info("📄 기존 파일 발견, 업데이트 모드")
-        else:
-            st.sidebar.info("📄 새 파일 생성 모드")
         
         # 파일 업데이트
         import base64
@@ -106,8 +94,6 @@ def update_file_via_github_api(file_path, content, commit_message):
         }
         
         response = requests.put(url, headers=headers, json=data)
-        
-        st.sidebar.info(f"📡 응답 코드: {response.status_code}")
         
         if response.status_code in [200, 201]:
             st.success("✅ GitHub에 직접 업데이트되었습니다!")
