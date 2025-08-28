@@ -2045,6 +2045,7 @@ def process_uploaded_data(uploaded_data, df):
         execution_update_data = pd.DataFrame()
     
     # 업데이트된 배정 데이터 수 계산
+    existing_assignment_data = load_assignment_history()
     updated_count = len([row for row in assignment_update_data.iterrows() if 
                         any((existing_assignment_data['id'] == row[1]['id']) & 
                             (existing_assignment_data['브랜드'] == row[1]['브랜드']) & 
