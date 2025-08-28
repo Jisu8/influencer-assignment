@@ -7,6 +7,7 @@ import subprocess
 from datetime import datetime
 import requests
 import json
+import base64
 
 # 환경 감지 함수
 def is_running_on_streamlit_cloud():
