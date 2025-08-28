@@ -654,6 +654,94 @@ def display_incomplete_assignments(incomplete_assignments, previous_month, df):
     st.stop()
 
 # =============================================================================
+# 공통 유틸리티 함수들
+# =============================================================================
+
+def calculate_remaining_quantity(influencer_id, brand, df):
+    """잔여수 계산 공통 함수"""
+    # 인플루언서 데이터 확인
+    influencer_data = df[df['id'] == influencer_id]
+    if influencer_data.empty:
+        return 0
+    
+    brand_qty_col = f"{brand.lower()}_qty"
+    brand_contract_qty = influencer_data.iloc[0].get(brand_qty_col, 0)
+    
+    # 1. 전월까지의 모든 집행완료 데이터 확인
+    execution_data = load_execution_data()
+    total_executed_count = 0
+    if not execution_data.empty:
+        exec_mask = (
+            (execution_data['id'] == influencer_id) &
+            (execution_data['브랜드'] == brand)
+        )
+        if exec_mask.any():
+            total_executed_count = execution_data.loc[exec_mask, '실제집행수'].sum()
+    
+    # 2. 현재까지의 모든 배정 수 확인
+    assignment_history = load_assignment_history()
+    total_assigned_count = 0
+    if not assignment_history.empty and 'id' in assignment_history.columns and '브랜드' in assignment_history.columns:
+        existing_assignments = assignment_history[
+            (assignment_history['id'] == influencer_id) & 
+            (assignment_history['브랜드'] == brand)
+        ]
+        total_assigned_count = len(existing_assignments)
+    
+    # 3. 실제 잔여수 계산: 계약수 - (집행완료 + 배정)
+    actual_remaining = max(0, brand_contract_qty - total_executed_count - total_assigned_count)
+    return actual_remaining
+
+def check_duplicate_assignment(influencer_id, brand, month, assignment_history):
+    """중복 배정 체크 공통 함수"""
+    if assignment_history.empty:
+        return False
+    
+    existing_mask = (
+        (assignment_history['id'] == influencer_id) &
+        (assignment_history['브랜드'] == brand) &
+        (assignment_history['배정월'] == month)
+    )
+    return existing_mask.any()
+
+def calculate_brand_remaining_quantity(influencer_id, brand, df):
+    """브랜드별 잔여수 계산"""
+    return calculate_remaining_quantity(influencer_id, brand, df)
+
+def calculate_total_remaining_quantity(influencer_id, df):
+    """전체 잔여수 계산"""
+    influencer_data = df[df['id'] == influencer_id]
+    if influencer_data.empty:
+        return 0
+    
+    # 전체 계약수
+    total_contract_qty = (
+        influencer_data.iloc[0].get('mlb_qty', 0) + 
+        influencer_data.iloc[0].get('dx_qty', 0) + 
+        influencer_data.iloc[0].get('dv_qty', 0) + 
+        influencer_data.iloc[0].get('st_qty', 0)
+    )
+    
+    # 전체 집행완료 수
+    execution_data = load_execution_data()
+    total_executed_count = 0
+    if not execution_data.empty:
+        exec_mask = (execution_data['id'] == influencer_id)
+        if exec_mask.any():
+            total_executed_count = execution_data.loc[exec_mask, '실제집행수'].sum()
+    
+    # 전체 배정 수
+    assignment_history = load_assignment_history()
+    total_assigned_count = 0
+    if not assignment_history.empty and 'id' in assignment_history.columns:
+        existing_assignments = assignment_history[assignment_history['id'] == influencer_id]
+        total_assigned_count = len(existing_assignments)
+    
+    # 전체 잔여수 계산
+    total_remaining = max(0, total_contract_qty - total_executed_count - total_assigned_count)
+    return total_remaining
+
+# =============================================================================
 # 배정 관련 함수들
 # =============================================================================
 
@@ -702,42 +790,21 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
             brand_df = df[df[f"{brand.lower()}_qty"] > 0].copy()
             brand_df = brand_df[~brand_df["id"].isin(already_assigned_influencers)]
             brand_df = brand_df[~brand_df["id"].isin(newly_assigned_influencers)]
-            brand_df = brand_df.sort_values("follower", ascending=False)
+            
+            # 계약수가 많은 순서로 우선 정렬, 같은 계약수면 랜덤 배정
+            brand_df = brand_df.sort_values(f"{brand.lower()}_qty", ascending=False)
+            # 같은 계약수 내에서는 랜덤 순서로 배정
+            brand_df = brand_df.sample(frac=1, random_state=42).reset_index(drop=True)
             
             assigned_count = 0
             for _, row in brand_df.iterrows():
                 if assigned_count >= qty:
                     break
                 
-                # 배정 핵심 로직: 전월까지 집행완료 + 현재까지 배정을 고려한 잔여수 확인
-                brand_contract_qty = row[f"{brand.lower()}_qty"]
+                # 배정 핵심 로직: 공통 함수 사용
+                actual_remaining = calculate_remaining_quantity(row['id'], brand, df)
                 
-                # 1. 전월까지의 모든 집행완료 데이터 확인
-                execution_data = load_execution_data()
-                total_executed_count = 0
-                if not execution_data.empty:
-                    # 해당 인플루언서의 해당 브랜드 모든 집행완료 수
-                    exec_mask = (
-                        (execution_data['id'] == row['id']) &
-                        (execution_data['브랜드'] == brand)
-                    )
-                    if exec_mask.any():
-                        total_executed_count = execution_data.loc[exec_mask, '실제집행수'].sum()
-                
-                # 2. 현재까지의 모든 배정 수 확인
-                if not existing_history.empty and 'id' in existing_history.columns and '브랜드' in existing_history.columns:
-                    existing_assignments = existing_history[
-                        (existing_history['id'] == row['id']) & 
-                        (existing_history['브랜드'] == brand)
-                    ]
-                else:
-                    existing_assignments = pd.DataFrame()
-                total_assigned_count = len(existing_assignments)
-                
-                # 3. 실제 잔여수 계산: 계약수 - (집행완료 + 배정)
-                actual_remaining = max(0, brand_contract_qty - total_executed_count - total_assigned_count)
-                
-                # 4. 잔여수가 없으면 배정 불가
+                # 잔여수가 없으면 배정 불가
                 if actual_remaining <= 0:
                     continue  # 잔여수가 없으면 건너뛰기
                 
@@ -882,49 +949,34 @@ def execute_manual_assignment(selected_month, selected_season, brand, influencer
         influencer_name = df[df['id'] == influencer_id]['name'].iloc[0]
         assignment_history = load_assignment_history()
         
-        # 중복 배정 확인 (같은 브랜드, 같은 월)
-        # 브랜드 필드에 쉼표가 포함된 경우도 체크
-        existing_mask = (
-            (assignment_history['id'] == influencer_id) &
-            (assignment_history['배정월'] == selected_month) &
-            (
-                (assignment_history['브랜드'] == brand) |
-                (assignment_history['브랜드'].str.contains(brand, na=False)) |
-                (assignment_history['브랜드'].str.contains(f"{brand},", na=False)) |
-                (assignment_history['브랜드'].str.contains(f", {brand}", na=False))
-            )
-        )
-        
-        if not existing_mask.any():
-            # 배정 핵심 로직: 전월까지 집행완료 + 현재까지 배정을 고려한 잔여수 확인
-            influencer_data = df[df['id'] == influencer_id].iloc[0]
-            brand_qty_col = f"{brand.lower()}_qty"
-            brand_contract_qty = influencer_data.get(brand_qty_col, 0)
+        # 중복 배정 확인: 공통 함수 사용
+        if not check_duplicate_assignment(influencer_id, brand, selected_month, assignment_history):
+            # 배정 핵심 로직: 공통 함수 사용
+            actual_remaining = calculate_remaining_quantity(influencer_id, brand, df)
             
-            # 1. 전월까지의 모든 집행완료 데이터 확인
-            execution_data = load_execution_data()
-            total_executed_count = 0
-            if not execution_data.empty:
-                # 해당 인플루언서의 해당 브랜드 모든 집행완료 수
-                exec_mask = (
-                    (execution_data['id'] == influencer_id) &
-                    (execution_data['브랜드'] == brand)
-                )
-                if exec_mask.any():
-                    total_executed_count = execution_data.loc[exec_mask, '실제집행수'].sum()
-            
-            # 2. 현재까지의 모든 배정 수 확인
-            existing_assignments = assignment_history[
-                (assignment_history['id'] == influencer_id) & 
-                (assignment_history['브랜드'] == brand)
-            ]
-            total_assigned_count = len(existing_assignments)
-            
-            # 3. 실제 잔여수 계산: 계약수 - (집행완료 + 배정)
-            actual_remaining = max(0, brand_contract_qty - total_executed_count - total_assigned_count)
-            
-            # 4. 잔여수가 없으면 배정 불가
+            # 잔여수가 없으면 배정 불가
             if actual_remaining <= 0:
+                influencer_data = df[df['id'] == influencer_id].iloc[0]
+                brand_qty_col = f"{brand.lower()}_qty"
+                brand_contract_qty = influencer_data.get(brand_qty_col, 0)
+                
+                # 집행완료 수와 배정 수 계산 (에러 메시지용)
+                execution_data = load_execution_data()
+                total_executed_count = 0
+                if not execution_data.empty:
+                    exec_mask = (
+                        (execution_data['id'] == influencer_id) &
+                        (execution_data['브랜드'] == brand)
+                    )
+                    if exec_mask.any():
+                        total_executed_count = execution_data.loc[exec_mask, '실제집행수'].sum()
+                
+                existing_assignments = assignment_history[
+                    (assignment_history['id'] == influencer_id) & 
+                    (assignment_history['브랜드'] == brand)
+                ]
+                total_assigned_count = len(existing_assignments)
+                
                 st.sidebar.error(f"❌ {influencer_name}의 {brand} 브랜드 잔여수가 없습니다. (계약수: {brand_contract_qty}, 집행완료: {total_executed_count}, 배정: {total_assigned_count})")
                 return
             
@@ -1910,8 +1962,8 @@ def handle_excel_upload(uploaded_file, df):
         else:
             uploaded_data = pd.read_excel(uploaded_file, engine='xlrd')
         
-        # 필수 컬럼만 검증 (id, 배정월, 결과만 필수, 나머지는 선택사항)
-        required_columns = ['id', '배정월', '결과']
+        # 필수 컬럼만 검증 (id, 브랜드, 배정월, 결과 필수)
+        required_columns = ['id', '브랜드', '배정월', '결과']
         missing_columns = [col for col in required_columns if col not in uploaded_data.columns]
         
         if missing_columns:
@@ -1925,7 +1977,7 @@ def handle_excel_upload(uploaded_file, df):
 def process_uploaded_data(uploaded_data, df):
     """업로드된 데이터 처리"""
     # 필수 컬럼 확인
-    required_columns = ['id', '배정월', '결과']
+    required_columns = ['id', '브랜드', '배정월', '결과']
     
     # 필수 컬럼이 있으면 처리 진행
     if all(col in uploaded_data.columns for col in required_columns):
@@ -1940,14 +1992,9 @@ def process_uploaded_data(uploaded_data, df):
                 invalid_assignments.append(f"ID '{row['id']}'를 찾을 수 없습니다.")
                 continue
             
-            # 브랜드 확인 (기본값: MLB)
-            brand = row.get('브랜드', 'MLB')
+            # 브랜드 확인 (필수 컬럼)
+            brand = row['브랜드']
             brand_qty_col = f"{brand.lower()}_qty"
-            
-            # 계약수 확인
-            if brand_qty_col not in df.columns or influencer_info.iloc[0][brand_qty_col] <= 0:
-                invalid_assignments.append(f"'{row['id']}'의 {brand} 브랜드 계약수가 없습니다.")
-                continue
             
             # 유효한 배정 데이터로 추가
             assignment_row = row.copy()
@@ -1959,7 +2006,12 @@ def process_uploaded_data(uploaded_data, df):
             assignment_row['2차활용'] = influencer_info.iloc[0]['sec_usage']
             assignment_row['2차기간'] = influencer_info.iloc[0]['sec_period']
             assignment_row['브랜드'] = brand
-            assignment_row['브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
+            
+            # 브랜드_계약수 자동 채우기 (있으면 가져오고, 없으면 빈 값)
+            if brand_qty_col in df.columns and brand_qty_col in influencer_info.columns:
+                assignment_row['브랜드_계약수'] = influencer_info.iloc[0][brand_qty_col]
+            else:
+                assignment_row['브랜드_계약수'] = ""
             
             # 집행URL 컬럼이 없으면 빈 값으로 추가
             if '집행URL' not in assignment_row:
