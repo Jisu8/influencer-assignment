@@ -181,6 +181,11 @@ os.makedirs(DATA_DIR, exist_ok=True)
 def auto_push_to_github(commit_message="Auto-update data files"):
     """데이터 변경 시 자동으로 GitHub에 푸시"""
     try:
+        # 클라우드에서만 실행
+        if not is_running_on_streamlit_cloud():
+            print("Local environment detected. Skipping auto push to GitHub.")
+            return False
+            
         # Git 상태 확인
         result = subprocess.run(['git', 'status', '--porcelain'], 
                               capture_output=True, text=True, cwd=SCRIPT_DIR)
@@ -292,11 +297,30 @@ def check_github_sync_status():
                 st.sidebar.error(f"❌ 파일 정보 파싱 오류: {e}")
                 return False
             
-            # 간단한 동기화 상태 확인
-            if assignment_updated != '알 수 없음' or execution_updated != '알 수 없음':
-                st.sidebar.success("🟢 GitHub 동기화 정상")
-            else:
-                st.sidebar.info("ℹ️ 동기화 상태 확인 불가")
+            st.sidebar.success("✅ GitHub 동기화 상태 확인 완료!")
+            st.sidebar.info(f"📊 배정 데이터: {assignment_updated}")
+            st.sidebar.info(f"📈 집행 데이터: {execution_updated}")
+            
+            # 최근 5분 내에 업데이트되었는지 확인 (안전하게 처리)
+            try:
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                
+                if assignment_updated != '알 수 없음' and execution_updated != '알 수 없음':
+                    assignment_time = datetime.fromisoformat(assignment_updated.replace('Z', '+00:00'))
+                    execution_time = datetime.fromisoformat(execution_updated.replace('Z', '+00:00'))
+                    
+                    time_diff_assignment = (now - assignment_time).total_seconds() / 60
+                    time_diff_execution = (now - execution_time).total_seconds() / 60
+                    
+                    if time_diff_assignment < 5 and time_diff_execution < 5:
+                        st.sidebar.success("🟢 최근에 동기화됨 (5분 이내)")
+                    else:
+                        st.sidebar.warning("🟡 마지막 동기화가 오래됨 (5분 이상)")
+                else:
+                    st.sidebar.warning("⚠️ 파일 수정 시간을 확인할 수 없습니다.")
+            except Exception as e:
+                st.sidebar.warning(f"⚠️ 시간 비교 중 오류: {e}")
             
             return True
         else:
@@ -531,6 +555,14 @@ def load_influencer_data():
 
 def pull_latest_data_from_github(show_in_sidebar=False):
     """GitHub에서 최신 데이터 가져오기"""
+    # 로컬 환경에서는 실행하지 않음
+    if not is_running_on_streamlit_cloud():
+        if show_in_sidebar:
+            st.sidebar.info("💻 로컬 환경에서는 GitHub 동기화가 비활성화됩니다.")
+        else:
+            st.info("💻 로컬 환경에서는 GitHub 동기화가 비활성화됩니다.")
+        return False
+    
     try:
         # Git pull 실행
         result = subprocess.run(['git', 'pull', 'origin', 'master'], 
@@ -587,21 +619,25 @@ def check_previous_month_completion(selected_month, selected_season, df):
             execution_data = load_execution_data()
             
             for _, assignment in previous_month_assignments.iterrows():
-                # execution_data가 비어있거나 필요한 컬럼이 없으면 모든 배정을 미완료로 처리
-                if execution_data.empty or 'id' not in execution_data.columns:
-                    incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']})")
+                # 상태가 '배정완료'인 경우는 집행상태 미완료로 처리
+                if '상태' in assignment and assignment['상태'] in ['📋 배정완료', '배정완료']:
+                    incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']}) - 배정완료 상태")
                 else:
-                    exec_mask = (
-                        (execution_data['id'] == assignment['id']) &
-                        (execution_data['브랜드'] == assignment['브랜드']) &
-                        (execution_data['배정월'] == assignment['배정월'])
-                    )
-                    
-                    # 해당 배정에 대한 집행 데이터가 없거나 실제집행수가 0이면 집행상태 미업데이트
-                    if not exec_mask.any():
-                        incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']}) - 집행상태 미업데이트")
-                    elif execution_data.loc[exec_mask, '실제집행수'].iloc[0] == 0:
-                        incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']}) - 집행상태 미업데이트")
+                    # execution_data가 비어있거나 필요한 컬럼이 없으면 모든 배정을 미완료로 처리
+                    if execution_data.empty or 'id' not in execution_data.columns:
+                        incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']})")
+                    else:
+                        exec_mask = (
+                            (execution_data['id'] == assignment['id']) &
+                            (execution_data['브랜드'] == assignment['브랜드']) &
+                            (execution_data['배정월'] == assignment['배정월'])
+                        )
+                        
+                        # 해당 배정에 대한 집행 데이터가 없거나 실제집행수가 0이면 집행상태 미업데이트
+                        if not exec_mask.any():
+                            incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']}) - 집행상태 미업데이트")
+                        elif execution_data.loc[exec_mask, '실제집행수'].iloc[0] == 0:
+                            incomplete_assignments.append(f"{assignment['이름']} ({assignment['브랜드']}) - 집행상태 미업데이트")
             
             if incomplete_assignments:
                 return False, incomplete_assignments, previous_month
@@ -615,7 +651,7 @@ def display_incomplete_assignments(incomplete_assignments, previous_month, df):
     if st.button("🔙 돌아가기", type="secondary", use_container_width=True):
         st.rerun()
     
-    # 브랜드별로 결과 정리
+    # 브랜드별로 상태 정리
     brand_assignments = {"MLB": [], "DX": [], "DV": [], "ST": []}
     for assignment in incomplete_assignments:
         if "(" in assignment and ")" in assignment:
@@ -623,7 +659,7 @@ def display_incomplete_assignments(incomplete_assignments, previous_month, df):
             if brand in brand_assignments:
                 brand_assignments[brand].append(assignment.split(" (")[0])
     
-    # 브랜드별로 결과 표시
+    # 브랜드별로 상태 표시
     for brand in BRANDS:
         if brand_assignments[brand]:
             st.markdown(f'<div class="brand-list"><div class="brand-title">{brand}</div>', unsafe_allow_html=True)
@@ -772,9 +808,15 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
             brand_df = brand_df[~brand_df["id"].isin(already_assigned_influencers)]
             brand_df = brand_df[~brand_df["id"].isin(newly_assigned_influencers)]
             
-            # 계약수가 많은 순서로 우선 정렬, 같은 계약수면 랜덤 배정
-            brand_df = brand_df.sort_values(f"{brand.lower()}_qty", ascending=False)
-            # 같은 계약수 내에서는 랜덤 순서로 배정
+            # 잔여계약수가 많은 순서로 우선 정렬
+            # 각 인플루언서의 잔여계약수 계산
+            brand_df['잔여계약수'] = brand_df.apply(
+                lambda row: calculate_remaining_quantity(row['id'], brand, df), axis=1
+            )
+            
+            # 잔여계약수가 많은 순서로 정렬, 같은 잔여계약수면 랜덤 배정
+            brand_df = brand_df.sort_values('잔여계약수', ascending=False)
+            # 같은 잔여계약수 내에서는 랜덤 순서로 배정
             brand_df = brand_df.sample(frac=1, random_state=42).reset_index(drop=True)
             
             assigned_count = 0
@@ -796,7 +838,7 @@ def execute_automatic_assignment(selected_month, selected_season, quantities, df
                 newly_assigned_influencers.add(row["id"])
                 assigned_count += 1
     
-    # 결과 저장
+    # 상태 저장
     if results:
         save_assignments(results, existing_history)
         st.success(f"✅ {selected_month}에 {len(results)}개의 배정이 완료되었습니다!")
@@ -839,14 +881,14 @@ def create_assignment_info(row, brand, selected_month, df):
         assign_mask = (
             (assignment_data['id'] == row['id']) &
             (assignment_data['브랜드'] == brand) &
-            (assignment_data['결과'] == '배정완료')
+            (assignment_data['상태'] == '배정완료')
         )
         if assign_mask.any():
             brand_assignment_count = len(assignment_data.loc[assign_mask])
         
         total_assign_mask = (
             (assignment_data['id'] == row['id']) &
-            (assignment_data['결과'] == '배정완료')
+            (assignment_data['상태'] == '배정완료')
         )
         if total_assign_mask.any():
             total_assignment_count = len(assignment_data.loc[total_assign_mask])
@@ -869,6 +911,7 @@ def create_assignment_info(row, brand, selected_month, df):
         "전체_계약수": original_total_qty,
         "전체_실집행수": total_execution_count,
         "전체_잔여수": total_remaining,
+        "상태": "📋 배정완료",
         "집행URL": ""
     }
 
@@ -1016,14 +1059,14 @@ def create_manual_assignment_info(influencer_id, brand, selected_month, df):
         assign_mask = (
             (assignment_data['id'] == influencer_id) &
             (assignment_data['브랜드'] == brand) &
-            (assignment_data['결과'] == '배정완료')
+            (assignment_data['상태'] == '배정완료')
         )
         if assign_mask.any():
             brand_assignment_count = len(assignment_data.loc[assign_mask])
         
         total_assign_mask = (
             (assignment_data['id'] == influencer_id) &
-            (assignment_data['결과'] == '배정완료')
+            (assignment_data['상태'] == '배정완료')
         )
         if total_assign_mask.any():
             total_assignment_count = len(assignment_data.loc[total_assign_mask])
@@ -1046,6 +1089,7 @@ def create_manual_assignment_info(influencer_id, brand, selected_month, df):
         '전체_계약수': total_contract_qty,
         '전체_실집행수': total_execution_count,
         '전체_잔여수': total_remaining,
+        '상태': '📋 배정완료',
         '집행URL': ""
     }
 
@@ -1092,8 +1136,8 @@ def render_sidebar(df):
         # GitHub 연결 상태 확인
         connection_status = check_github_connection()
         
-        # GitHub 동기화 상태 확인 (로컬과 클라우드 모두)
-        if connection_status:
+        # 클라우드에서 실행 중인 경우에만 GitHub 동기화 상태 확인
+        if connection_status and is_running_on_streamlit_cloud():
             check_github_sync_status()
     
     return selected_month, selected_season, month_options
@@ -1201,14 +1245,14 @@ def render_selected_id_info():
             st.sidebar.error(f"❌ {selected_id} 정보를 찾을 수 없습니다.")
 
 def render_assignment_results_tab(month_options, df):
-    """배정 및 집행결과 탭 렌더링"""
-    st.subheader("📊 배정 및 집행결과")
+    """배정 및 집행상태 탭 렌더링"""
+    st.subheader("📊 배정 및 집행상태")
     
     # 필터
     selected_month_filter = st.selectbox("📅 배정월", month_options, index=0, key="tab1_month_filter")
     selected_brand_filter = st.selectbox("🏷️ 브랜드", BRAND_OPTIONS, index=0, key="tab1_brand_filter")
     
-    # 배정 결과 로드 및 표시
+    # 배정 상태 로드 및 표시
     if os.path.exists(ASSIGNMENT_FILE):
         assignment_history = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
         
@@ -1231,7 +1275,7 @@ def render_assignment_results_tab(month_options, df):
             if not all_results.empty:
                 render_assignment_table(all_results, df)
             else:
-                st.info("해당 조건의 배정 결과가 없습니다.")
+                st.info("해당 조건의 배정 상태가 없습니다.")
         else:
             st.info("배정 이력이 없습니다.")
     else:
@@ -1242,7 +1286,7 @@ def render_assignment_results_tab(month_options, df):
 
 def render_assignment_table(all_results, df):
     """배정 테이블 렌더링"""
-    # 체크박스, 넘버, 결과 상태 추가
+    # 체크박스, 넘버, 상태 상태 추가
     all_results_with_checkbox = prepare_assignment_data(all_results)
     
     # 배정 개수 정보 표시
@@ -1265,20 +1309,16 @@ def prepare_assignment_data(all_results):
     """배정 데이터 준비"""
     all_results_with_checkbox = all_results.copy()
     
-    # select_all 상태 초기화
-    if 'select_all' not in st.session_state:
-        st.session_state.select_all = False
-    
     # 전체 선택 상태에 따라 체크박스 기본값 설정
     default_checked = st.session_state.get('select_all', False)
     all_results_with_checkbox['선택'] = default_checked
     all_results_with_checkbox['번호'] = range(1, len(all_results_with_checkbox) + 1)
     
-    # 결과 상태 추가
-    all_results_with_checkbox['결과'] = '📋 배정완료'
+    # 기존 배정 이력에서 상태 값 가져오기 (엑셀 업로드 데이터 우선)
+    load_existing_results(all_results_with_checkbox)
     
-    # 실집행수가 있는 경우 '집행완료'로 변경
-    update_execution_status(all_results_with_checkbox)
+    # 상태에 따라 집행수를 동적으로 계산
+    update_execution_status_dynamically(all_results_with_checkbox)
     
     # 숫자 컬럼 처리
     process_numeric_columns(all_results_with_checkbox)
@@ -1304,8 +1344,8 @@ def prepare_assignment_data(all_results):
     all_results_with_checkbox['2차활용'] = all_results_with_checkbox['id'].map(sec_usage_mapping).fillna('X')
     all_results_with_checkbox['2차기간'] = all_results_with_checkbox['id'].map(sec_period_mapping).fillna('')
     
-    # 컬럼 순서 재정렬 (2차활용 다음에 2차기간, 브랜드_잔여수를 브랜드_계약수 다음에, 결과를 맨 오른쪽에 배치)
-    cols = ['선택', '번호', '배정월', '브랜드', 'id', '이름', 'FLW', '1회계약단가', '2차활용', '2차기간', '브랜드_계약수', '브랜드_잔여수', '결과', '집행URL']
+        # 컬럼 순서 재정렬 (2차활용 다음에 2차기간, 브랜드_잔여수를 브랜드_계약수 다음에, 상태를 맨 오른쪽에 배치)
+    cols = ['선택', '번호', '배정월', '브랜드', 'id', '이름', 'FLW', '1회계약단가', '2차활용', '2차기간', '브랜드_계약수', '브랜드_잔여수', '상태', '집행URL']
     # 존재하는 컬럼만 필터링
     existing_cols = [col for col in cols if col in all_results_with_checkbox.columns]
     # 나머지 컬럼들 추가
@@ -1313,6 +1353,83 @@ def prepare_assignment_data(all_results):
     all_results_with_checkbox = all_results_with_checkbox[existing_cols + remaining_cols]
     
     return all_results_with_checkbox
+
+def load_existing_results(all_results_with_checkbox):
+    """기존 배정 이력에서 상태 값 가져오기 (엑셀 업로드 데이터 우선)"""
+    # 상태 컬럼이 없으면 추가하고, 있으면 기존 값 유지
+    if '상태' not in all_results_with_checkbox.columns:
+        all_results_with_checkbox['상태'] = '📋 배정완료'
+    else:
+        # 상태 컬럼이 있으면 빈 값만 기본값으로 설정
+        all_results_with_checkbox['상태'] = all_results_with_checkbox['상태'].fillna('📋 배정완료')
+    
+    # 기존 배정 이력에서 상태 값 가져오기 (엑셀 업로드 데이터가 우선)
+    if os.path.exists(ASSIGNMENT_FILE):
+        assignment_history = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
+        if '상태' in assignment_history.columns:
+            for idx, row in all_results_with_checkbox.iterrows():
+                result_mask = (
+                    (assignment_history['id'] == row['id']) &
+                    (assignment_history['브랜드'] == row['브랜드']) &
+                    (assignment_history['배정월'] == row['배정월'])
+                )
+                if result_mask.any():
+                    result_value = assignment_history.loc[result_mask, '상태'].iloc[0]
+                    # 엑셀에서 업로드한 상태 값이 있으면 그것을 우선시
+                    if pd.notna(result_value) and result_value != "":
+                        # 상태 값 변환 (이모지 형태로 통일)
+                        if result_value == '배정완료':
+                            all_results_with_checkbox.loc[idx, '상태'] = '📋 배정완료'
+                        elif result_value == '집행완료':
+                            all_results_with_checkbox.loc[idx, '상태'] = '✅ 집행완료'
+                        else:
+                            # 이미 이모지가 포함된 경우 그대로 사용
+                            all_results_with_checkbox.loc[idx, '상태'] = result_value
+
+def update_execution_status_dynamically(all_results_with_checkbox):
+    """상태에 따라 집행수를 동적으로 계산"""
+    if os.path.exists(EXECUTION_FILE):
+        execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
+        
+        for idx, row in all_results_with_checkbox.iterrows():
+            current_status = all_results_with_checkbox.loc[idx, '상태']
+            
+            # 상태가 '배정완료'인 경우 실제집행수를 0으로 설정
+            if current_status in ['📋 배정완료', '배정완료']:
+                # execution_status.csv에서 해당 데이터 제거 또는 실제집행수를 0으로 설정
+                exec_mask = (
+                    (execution_data['id'] == row['id']) &
+                    (execution_data['브랜드'] == row['브랜드']) &
+                    (execution_data['배정월'] == row['배정월'])
+                )
+                if exec_mask.any():
+                    execution_data.loc[exec_mask, '실제집행수'] = 0
+            
+            # 상태가 '집행완료'인 경우 실제집행수를 1로 설정
+            elif current_status in ['✅ 집행완료', '집행완료']:
+                exec_mask = (
+                    (execution_data['id'] == row['id']) &
+                    (execution_data['브랜드'] == row['브랜드']) &
+                    (execution_data['배정월'] == row['배정월'])
+                )
+                if exec_mask.any():
+                    execution_data.loc[exec_mask, '실제집행수'] = 1
+                else:
+                    # 집행 데이터가 없으면 새로 추가
+                    new_row = {
+                        'id': row['id'],
+                        '이름': row['이름'],
+                        '브랜드': row['브랜드'],
+                        '배정월': row['배정월'],
+                        '실제집행수': 1
+                    }
+                    execution_data = pd.concat([execution_data, pd.DataFrame([new_row])], ignore_index=True)
+        
+        # 변경된 execution_data 저장
+        if is_running_on_streamlit_cloud():
+            save_with_auto_sync(execution_data, EXECUTION_FILE, "상태에 따른 집행수 동적 업데이트")
+        else:
+            save_local_only(execution_data, EXECUTION_FILE)
 
 def update_execution_status(all_results_with_checkbox):
     """실행 상태 업데이트"""
@@ -1326,7 +1443,15 @@ def update_execution_status(all_results_with_checkbox):
                     (execution_data['배정월'] == row['배정월'])
                 )
                 if exec_mask.any() and execution_data.loc[exec_mask, '실제집행수'].iloc[0] > 0:
-                    all_results_with_checkbox.loc[idx, '결과'] = '✅ 집행완료'
+                    # 현재 상태 확인
+                    current_status = all_results_with_checkbox.loc[idx, '상태']
+                    
+                    # 엑셀에서 업로드된 상태 값은 절대 덮어쓰지 않음
+                    # 오직 자동으로 설정된 '📋 배정완료' 상태만 '✅ 집행완료'로 변경
+                    # 엑셀에서 업로드한 '✅ 집행완료' 또는 '📋 배정완료' 상태는 그대로 유지
+                    if current_status == '📋 배정완료':
+                        all_results_with_checkbox.loc[idx, '상태'] = '✅ 집행완료'
+                    # 그 외의 모든 상태 값은 그대로 유지 (엑셀 업로드 값 우선)
 
 def process_numeric_columns(all_results_with_checkbox):
     """숫자 컬럼 처리"""
@@ -1356,22 +1481,23 @@ def add_execution_url_column(all_results_with_checkbox):
 
 def render_table_controls(all_results):
     """테이블 컨트롤 렌더링"""
-    # select_all 상태 초기화
-    if 'select_all' not in st.session_state:
-        st.session_state.select_all = False
-    
     # 하단 버튼들과 정확히 같은 너비로 배치
     col1, col2, col3, col_spacer, col4 = st.columns([0.15, 0.15, 0.15, 0.1, 0.45])
     
     with col1:
         # 전체 선택 상태에 따라 버튼 텍스트 변경
-        select_all_state = st.session_state.select_all
+        select_all_state = st.session_state.get('select_all', False)
         button_text = "✅ 전체선택" if not select_all_state else "✅ 전체해제"
         
-        # 버튼 클릭 시 상태 변경
         if st.button(button_text, type="secondary", use_container_width=True, key="select_all_button"):
-            # 상태를 명시적으로 토글
-            st.session_state.select_all = not st.session_state.select_all
+            if 'select_all' not in st.session_state:
+                st.session_state.select_all = True
+            else:
+                st.session_state.select_all = not st.session_state.select_all
+            # 데이터 에디터 키를 변경하여 강제로 새로고침
+            if 'data_editor_key' not in st.session_state:
+                st.session_state.data_editor_key = 0
+            st.session_state.data_editor_key += 1
             st.rerun()
     
     with col2:
@@ -1389,8 +1515,8 @@ def render_table_controls(all_results):
 
 def render_download_button(all_results_with_checkbox):
     """다운로드 버튼 렌더링"""
-    # 요청된 순서: 배정월/브랜드/ID/이름/FLW/2차활용/2차기간/결과/집행URL
-    available_columns = ['배정월', '브랜드', 'id', '이름', 'FLW', '2차활용', '2차기간', '결과', '집행URL']
+    # 요청된 순서: 배정월/브랜드/ID/이름/FLW/2차활용/2차기간/상태/집행URL
+    available_columns = ['배정월', '브랜드', 'id', '이름', 'FLW', '2차활용', '2차기간', '상태', '집행URL']
     
     # 누락된 컬럼들을 기본값으로 추가
     download_data = all_results_with_checkbox.copy()
@@ -1403,9 +1529,9 @@ def render_download_button(all_results_with_checkbox):
     if '2차기간' not in download_data.columns:
         download_data['2차기간'] = ''
     
-    # 결과 컬럼이 없으면 기본값 '배정완료'로 추가
-    if '결과' not in download_data.columns:
-        download_data['결과'] = '배정완료'
+    # 상태 컬럼이 없으면 기본값 '배정완료'로 추가
+    if '상태' not in download_data.columns:
+        download_data['상태'] = '배정완료'
     
     # 집행URL 컬럼이 없으면 기본값 ''로 추가
     if '집행URL' not in download_data.columns:
@@ -1415,8 +1541,8 @@ def render_download_button(all_results_with_checkbox):
     existing_columns = [col for col in available_columns if col in download_data.columns]
     download_data = download_data[existing_columns].copy()
     
-    if '결과' in download_data.columns:
-        download_data['결과'] = download_data['결과'].replace({
+    if '상태' in download_data.columns:
+        download_data['상태'] = download_data['상태'].replace({
             '📋 배정완료': '배정완료',
             '✅ 집행완료': '집행완료'
         })
@@ -1434,12 +1560,14 @@ def render_download_button(all_results_with_checkbox):
 
 def render_data_editor(all_results_with_checkbox):
     """데이터 에디터 렌더링"""
-    # 고정된 키 사용 (동적 키는 문제를 일으킬 수 있음)
+    # 동적 키 생성으로 강제 새로고침
+    editor_key = f"assignment_data_editor_{st.session_state.get('data_editor_key', 0)}"
+    
     return st.data_editor(
         all_results_with_checkbox,
         use_container_width=True,
         hide_index=True,
-        key="assignment_data_editor",
+        key=editor_key,
         column_config={
             "선택": st.column_config.CheckboxColumn(
                 "선택",
@@ -1452,8 +1580,8 @@ def render_data_editor(all_results_with_checkbox):
                 help="순서 번호",
                 format="%d"
             ),
-            "결과": st.column_config.SelectboxColumn(
-                "결과",
+            "상태": st.column_config.SelectboxColumn(
+                "상태",
                 help="배정/집행 상태 (직접 변경 가능)",
                 width="small",
                 options=STATUS_OPTIONS,
@@ -1533,7 +1661,7 @@ def handle_assignment_changes(edited_df, all_results_with_checkbox, df):
         # URL 변경사항 처리
         handle_url_changes(edited_df, all_results_with_checkbox)
         
-        # 결과 변경사항 처리
+        # 상태 변경사항 처리
         handle_result_changes(edited_df, all_results_with_checkbox)
 
 def handle_url_changes(edited_df, all_results_with_checkbox):
@@ -1556,13 +1684,13 @@ def handle_url_changes(edited_df, all_results_with_checkbox):
         st.rerun()
 
 def handle_result_changes(edited_df, all_results_with_checkbox):
-    """결과 변경사항 처리"""
+    """상태 변경사항 처리"""
     changed_to_executed = []
     changed_to_assigned = []
     
     for idx, row in edited_df.iterrows():
-        original_result = all_results_with_checkbox.loc[idx, '결과']
-        new_result = row['결과']
+        original_result = all_results_with_checkbox.loc[idx, '상태']
+        new_result = row['상태']
         
         if original_result == '📋 배정완료' and new_result == '✅ 집행완료':
             changed_to_executed.append({
@@ -1644,6 +1772,30 @@ def update_execution_data(changes, add=True):
         save_with_auto_sync(execution_data, EXECUTION_FILE, "집행 데이터 업데이트")
     else:
         save_local_only(execution_data, EXECUTION_FILE)
+    
+    # assignment_history.csv 파일의 상태도 함께 업데이트
+    if os.path.exists(ASSIGNMENT_FILE):
+        assignment_data = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
+        if '상태' in assignment_data.columns:
+            for change in changes:
+                assignment_mask = (
+                    (assignment_data['id'] == change['id']) &
+                    (assignment_data['브랜드'] == change['브랜드']) &
+                    (assignment_data['배정월'] == change['배정월'])
+                )
+                if assignment_mask.any():
+                    if add:
+                        # 집행완료로 변경
+                        assignment_data.loc[assignment_mask, '상태'] = '✅ 집행완료'
+                    else:
+                        # 배정완료로 되돌리기
+                        assignment_data.loc[assignment_mask, '상태'] = '📋 배정완료'
+            
+            # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
+            if is_running_on_streamlit_cloud():
+                save_with_auto_sync(assignment_data, ASSIGNMENT_FILE, "배정 상태 업데이트")
+            else:
+                save_local_only(assignment_data, ASSIGNMENT_FILE)
 
 def render_assignment_buttons(edited_df, df):
     """배정 버튼들 렌더링"""
@@ -1686,14 +1838,16 @@ def render_execution_complete_button(edited_df):
 def render_delete_assignment_button(edited_df, df):
     """배정 삭제 버튼 렌더링"""
     if st.button("❌ 배정 삭제", type="secondary", use_container_width=True):
-        # 선택된 행들을 찾기 (선택 컬럼이 True인 행들)
-        selected_rows = edited_df[edited_df['선택'] == True]
+        # 선택된 행 인덱스 사용
+        selected_rows = st.session_state.get('selected_rows', [])
         
-        if not selected_rows.empty:
+        if selected_rows and edited_df is not None and not edited_df.empty:
             execution_completed_selected = []
             deletable_rows = []
             
-            for _, row in selected_rows.iterrows():
+            for idx in selected_rows:
+                if idx < len(edited_df):
+                    row = edited_df.iloc[idx]
                 if is_execution_completed(row):
                     execution_completed_selected.append(f"{row['이름']} ({row['브랜드']})")
                 else:
@@ -1724,7 +1878,7 @@ def render_reset_assignment_button(df):
         st.session_state.reset_confirmation_shown = False
         st.rerun()
     
-    # 검증 결과 표시
+    # 검증 상태 표시
     if st.session_state.reset_verification_done:
         # 현재 표시된 배정 데이터 가져오기
         current_month_filter = st.session_state.get('tab1_month_filter', '')
@@ -1744,7 +1898,7 @@ def render_reset_assignment_button(df):
                     # 해당 월의 집행완료 데이터만 확인
                     month_completed = completed_data[completed_data['배정월'] == current_month_filter]
                     has_execution_completed = len(month_completed) > 0
-                else:
+        else:
                     # 전체 집행완료 데이터 확인
                     has_execution_completed = len(completed_data) > 0
         
@@ -1855,7 +2009,7 @@ def get_execution_completed_assignments_for_month(selected_month):
         # 집행완료된 배정 목록 생성
         for _, row in month_executions.iterrows():
             execution_completed_assignments.append(f"{row['이름']} ({row['브랜드']})")
-        
+    
         print(f"DEBUG: 최종 집행완료 배정 수: {len(execution_completed_assignments)}")
         return execution_completed_assignments
         
@@ -1923,18 +2077,25 @@ def render_excel_upload_section(df):
     """엑셀 업로드 섹션 렌더링"""
     st.markdown("---")
     st.subheader("📤 엑셀 업로드")
-    st.markdown("💡 **다운로드한 엑셀 파일을 수정한 후 업로드하여 배정 및 실집행결과를 업데이트하세요**")
+    st.markdown("💡 **다운로드한 엑셀 파일을 수정한 후 업로드하여 배정 및 실집행상태를 업데이트하세요**")
+    
+    # 업로드 모드 선택
+    upload_mode = st.radio(
+        "업로드 모드 선택",
+        ["기존 데이터 업데이트", "전체 데이터 교체"],
+        help="기존 데이터 업데이트: 기존 배정에 추가/수정, 전체 데이터 교체: 기존 데이터를 모두 삭제하고 새 데이터로 교체"
+    )
     
     uploaded_file = st.file_uploader(
-        "배정 및 실집행결과 엑셀 파일 업로드",
+        "배정 및 실집행상태 엑셀 파일 업로드",
         type=['xlsx', 'xls'],
-        help="수정한 엑셀 파일을 업로드하여 배정 및 실집행결과를 업데이트하세요"
+        help="수정한 엑셀 파일을 업로드하여 배정 및 실집행상태를 업데이트하세요"
     )
     
     if uploaded_file is not None:
-        handle_excel_upload(uploaded_file, df)
+        handle_excel_upload(uploaded_file, df, upload_mode)
 
-def handle_excel_upload(uploaded_file, df):
+def handle_excel_upload(uploaded_file, df, upload_mode):
     """엑셀 업로드 처리"""
     try:
         if uploaded_file.name.endswith('.xlsx'):
@@ -1942,25 +2103,59 @@ def handle_excel_upload(uploaded_file, df):
         else:
             uploaded_data = pd.read_excel(uploaded_file, engine='xlrd')
         
-        # 필수 컬럼만 검증 (id, 브랜드, 배정월, 결과 필수)
-        required_columns = ['id', '브랜드', '배정월', '결과']
+        # 필수 컬럼만 검증 (id, 브랜드, 배정월, 상태 필수)
+        required_columns = ['id', '브랜드', '배정월', '상태']
         missing_columns = [col for col in required_columns if col not in uploaded_data.columns]
         
         if missing_columns:
             st.error(f"❌ 필수 컬럼이 누락되었습니다: {', '.join(missing_columns)}")
         else:
-            process_uploaded_data(uploaded_data, df)
+            # 전체 데이터 교체 모드일 때 확인 다이얼로그 표시
+            if upload_mode == "전체 데이터 교체":
+                st.warning("⚠️ **전체 데이터 교체 모드**")
+                st.markdown("**기존의 모든 배정 및 집행 데이터가 삭제되고 새로운 데이터로 완전히 교체됩니다.**")
+                st.markdown("**이 작업은 되돌릴 수 없습니다.**")
+                
+                col1, col2, col3 = st.columns([1, 1, 1])
+                with col1:
+                    if st.button("✅ 전체 데이터 교체 실행", type="primary"):
+                        process_uploaded_data(uploaded_data, df, upload_mode)
+                with col2:
+                    if st.button("❌ 취소"):
+                        st.rerun()
+                with col3:
+                    st.empty()  # 빈 공간
+            else:
+                # 기존 데이터 업데이트 모드는 바로 실행
+                process_uploaded_data(uploaded_data, df, upload_mode)
             
     except Exception as e:
         st.error(f"❌ 파일 업로드 중 오류가 발생했습니다: {str(e)}")
 
-def process_uploaded_data(uploaded_data, df):
+def process_uploaded_data(uploaded_data, df, upload_mode):
     """업로드된 데이터 처리"""
     # 필수 컬럼 확인
-    required_columns = ['id', '브랜드', '배정월', '결과']
+    required_columns = ['id', '브랜드', '배정월', '상태']
     
     # 필수 컬럼이 있으면 처리 진행
     if all(col in uploaded_data.columns for col in required_columns):
+        # 상태 컬럼 값 검증 및 변환
+        valid_status_values = ['배정완료', '집행완료', '📋 배정완료', '✅ 집행완료']
+        
+        # 상태 컬럼의 빈 값이나 유효하지 않은 값 확인
+        invalid_status_rows = []
+        for idx, row in uploaded_data.iterrows():
+            status_value = str(row['상태']).strip() if pd.notna(row['상태']) else ''
+            if status_value == '' or status_value == 'nan' or status_value not in valid_status_values:
+                invalid_status_rows.append(f"행 {idx+1}: ID '{row['id']}' - 상태 값이 유효하지 않습니다. ('배정완료' 또는 '집행완료'여야 함)")
+        
+        if invalid_status_rows:
+            st.error("❌ 다음 배정 데이터의 상태 값이 유효하지 않습니다:")
+            for error in invalid_status_rows:
+                st.error(f"  • {error}")
+            st.error("상태 컬럼은 '배정완료' 또는 '집행완료' 값이어야 합니다.")
+            return
+        
         # 계약수 검증 및 기본 정보 자동 채우기
         valid_assignments = []
         invalid_assignments = []
@@ -1997,6 +2192,13 @@ def process_uploaded_data(uploaded_data, df):
             if '집행URL' not in assignment_row:
                 assignment_row['집행URL'] = ''
             
+            # 상태 값 변환 (이모지 형태로 통일)
+            status_value = str(assignment_row['상태']).strip()
+            if status_value == '배정완료':
+                assignment_row['상태'] = '📋 배정완료'
+            elif status_value == '집행완료':
+                assignment_row['상태'] = '✅ 집행완료'
+            
             valid_assignments.append(assignment_row)
         
         # 오류가 있으면 표시하고 중단
@@ -2009,7 +2211,7 @@ def process_uploaded_data(uploaded_data, df):
         # 유효한 배정 데이터만 처리
         if valid_assignments:
             assignment_update_data = pd.DataFrame(valid_assignments)
-            update_assignment_history(assignment_update_data, df)
+            update_assignment_history(assignment_update_data, df, upload_mode)
     
     # 실집행수 데이터 업데이트 (브랜드_실집행수 컬럼이 있는 경우에만)
     if '브랜드_실집행수' in uploaded_data.columns:
@@ -2020,7 +2222,7 @@ def process_uploaded_data(uploaded_data, df):
             on='id',
             how='left'
         )
-        update_execution_history(execution_update_data)
+        update_execution_history(execution_update_data, upload_mode)
     else:
         execution_update_data = pd.DataFrame()
     
@@ -2046,7 +2248,7 @@ def process_uploaded_data(uploaded_data, df):
     time.sleep(3)
     st.rerun()
 
-def update_assignment_history(assignment_update_data, df=None):
+def update_assignment_history(assignment_update_data, df=None, upload_mode=None):
     """배정 이력 업데이트"""
     if os.path.exists(ASSIGNMENT_FILE):
         existing_assignment_data = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
@@ -2055,43 +2257,57 @@ def update_assignment_history(assignment_update_data, df=None):
     else:
         existing_assignment_data = pd.DataFrame(columns=["브랜드", "id", "이름", "배정월", "집행URL"])
     
-    # 업데이트된 데이터를 기존 데이터와 병합
-    updated_data = []
-    new_data = []
-    
-    for _, new_row in assignment_update_data.iterrows():
-        # 기존 데이터에서 동일한 id, 브랜드, 배정월 조합 찾기
-        existing_mask = (
-            (existing_assignment_data['id'] == new_row['id']) &
-            (existing_assignment_data['브랜드'] == new_row['브랜드']) &
-            (existing_assignment_data['배정월'] == new_row['배정월'])
-        )
+    # 전체 데이터 교체 모드인 경우 해당 월의 데이터만 교체
+    if upload_mode == "전체 데이터 교체":
+        # 업로드된 데이터의 월들을 확인
+        uploaded_months = assignment_update_data['배정월'].unique()
         
-        if existing_mask.any():
-            # 기존 데이터가 있으면 업데이트 (결과, 집행URL 등만 변경)
-            existing_row = existing_assignment_data[existing_mask].iloc[0].copy()
+        # 기존 데이터에서 업로드된 월의 데이터를 제외하고 유지
+        remaining_data = existing_assignment_data[
+            ~existing_assignment_data['배정월'].isin(uploaded_months)
+        ]
+        
+        # 업로드된 데이터와 기존 데이터(업로드된 월 제외)를 병합
+        combined_assignment_data = pd.concat([remaining_data, assignment_update_data], ignore_index=True)
+    else:
+        # 기존 데이터 업데이트 모드
+        # 업데이트된 데이터를 기존 데이터와 병합
+        updated_data = []
+        new_data = []
+        
+        for _, new_row in assignment_update_data.iterrows():
+            # 기존 데이터에서 동일한 id, 브랜드, 배정월 조합 찾기
+            existing_mask = (
+                (existing_assignment_data['id'] == new_row['id']) &
+                (existing_assignment_data['브랜드'] == new_row['브랜드']) &
+                (existing_assignment_data['배정월'] == new_row['배정월'])
+            )
             
-            # 업데이트 가능한 필드들만 변경
-            updateable_fields = ['결과', '집행URL', '이름', 'FLW', '1회계약단가', '2차활용', '2차기간', '브랜드_계약수']
-            for field in updateable_fields:
-                if field in new_row and field in existing_row:
-                    existing_row[field] = new_row[field]
-            
-            updated_data.append(existing_row)
-        else:
-            # 새로운 데이터는 추가
-            new_data.append(new_row)
-    
-    # 기존 데이터에서 업데이트되지 않은 데이터 유지
-    updated_ids = [(row['id'], row['브랜드'], row['배정월']) for row in updated_data]
-    remaining_data = existing_assignment_data[
-        ~existing_assignment_data.apply(
-            lambda row: (row['id'], row['브랜드'], row['배정월']) in updated_ids, axis=1
-        )
-    ]
-    
-    # 모든 데이터 병합
-    combined_assignment_data = pd.concat([remaining_data, pd.DataFrame(updated_data), pd.DataFrame(new_data)], ignore_index=True)
+            if existing_mask.any():
+                # 기존 데이터가 있으면 업데이트 (상태, 집행URL 등만 변경)
+                existing_row = existing_assignment_data[existing_mask].iloc[0].copy()
+                
+                # 업데이트 가능한 필드들만 변경
+                updateable_fields = ['상태', '집행URL', '이름', 'FLW', '1회계약단가', '2차활용', '2차기간', '브랜드_계약수']
+                for field in updateable_fields:
+                    if field in new_row and field in existing_row:
+                        existing_row[field] = new_row[field]
+                
+                updated_data.append(existing_row)
+            else:
+                # 새로운 데이터는 추가
+                new_data.append(new_row)
+        
+        # 기존 데이터에서 업데이트되지 않은 데이터 유지
+        updated_ids = [(row['id'], row['브랜드'], row['배정월']) for row in updated_data]
+        remaining_data = existing_assignment_data[
+            ~existing_assignment_data.apply(
+                lambda row: (row['id'], row['브랜드'], row['배정월']) in updated_ids, axis=1
+            )
+        ]
+        
+        # 모든 데이터 병합
+        combined_assignment_data = pd.concat([remaining_data, pd.DataFrame(updated_data), pd.DataFrame(new_data)], ignore_index=True)
     
     # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
     if is_running_on_streamlit_cloud():
@@ -2099,15 +2315,30 @@ def update_assignment_history(assignment_update_data, df=None):
     else:
         save_local_only(combined_assignment_data, ASSIGNMENT_FILE)
 
-def update_execution_history(execution_update_data):
+def update_execution_history(execution_update_data, upload_mode=None):
     """실행 이력 업데이트"""
     if os.path.exists(EXECUTION_FILE):
         existing_execution_data = pd.read_csv(EXECUTION_FILE, encoding="utf-8")
     else:
         existing_execution_data = pd.DataFrame(columns=["id", "이름", "브랜드", "배정월", "실제집행수"])
     
-    combined_execution_data = pd.concat([existing_execution_data, execution_update_data], ignore_index=True)
-    combined_execution_data = combined_execution_data.drop_duplicates(subset=['id', '브랜드', '배정월'], keep='last')
+    # 전체 데이터 교체 모드인 경우 해당 월의 데이터만 교체
+    if upload_mode == "전체 데이터 교체":
+        # 업로드된 데이터의 월들을 확인
+        uploaded_months = execution_update_data['배정월'].unique()
+        
+        # 기존 데이터에서 업로드된 월의 데이터를 제외하고 유지
+        remaining_data = existing_execution_data[
+            ~existing_execution_data['배정월'].isin(uploaded_months)
+        ]
+        
+        # 업로드된 데이터와 기존 데이터(업로드된 월 제외)를 병합
+        combined_execution_data = pd.concat([remaining_data, execution_update_data], ignore_index=True)
+    else:
+        # 기존 데이터 업데이트 모드
+        combined_execution_data = pd.concat([existing_execution_data, execution_update_data], ignore_index=True)
+        combined_execution_data = combined_execution_data.drop_duplicates(subset=['id', '브랜드', '배정월'], keep='last')
+    
     # 클라우드에서는 GitHub 동기화, 로컬에서는 로컬 저장만
     if is_running_on_streamlit_cloud():
         save_with_auto_sync(combined_execution_data, EXECUTION_FILE, "Update execution history from Excel upload")
@@ -2123,19 +2354,19 @@ def render_influencer_tab(df):
         # 시즌 필터 - contract_sesn 데이터에서 시즌 추출
         season_options = get_season_options(df)
         selected_season_filter = st.selectbox("🏆 시즌", season_options, index=0, key="tab2_season_filter")
-        
-        # 브랜드 필터
+    
+    # 브랜드 필터
         selected_brand_filter = st.selectbox("🏷️ 브랜드", BRAND_OPTIONS, index=0, key="tab2_brand_filter")
     
     # 테이블 섹션을 컨테이너로 감싸서 일관된 공간 확보
     with st.container():
-        # 인플루언서 요약 데이터 준비
+    # 인플루언서 요약 데이터 준비
         influencer_summary = prepare_influencer_summary(df, selected_brand_filter, selected_season_filter)
-        
-        if not influencer_summary.empty:
+    
+    if not influencer_summary.empty:
             render_influencer_table(influencer_summary, selected_brand_filter, influencer_count=len(influencer_summary))
-        else:
-            st.info("인플루언서 데이터가 없습니다.")
+    else:
+        st.info("인플루언서 데이터가 없습니다.")
 
 def prepare_influencer_summary(df, selected_brand_filter, selected_season_filter):
     """인플루언서 요약 데이터 준비"""
@@ -2235,7 +2466,6 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
                 ]
                 
                 # 인플루언서별 해당 브랜드 집행수 계산
-                # execution_data의 컬럼명 확인 (id 또는 ID)
                 id_column = 'id' if 'id' in brand_executions.columns else 'id'
                 brand_executed = brand_executions.groupby(id_column)['실제집행수'].sum()
                 influencer_summary[f'{selected_brand}_집행수'] = influencer_summary['id'].map(brand_executed).fillna(0).astype(int)
@@ -2247,7 +2477,7 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
                         # 해당 브랜드의 배정완료 데이터만 필터링
                         brand_assignments = assignment_data[
                             (assignment_data['브랜드'] == selected_brand) & 
-                            (assignment_data['결과'] == '배정완료')
+                            (assignment_data['상태'] == '배정완료')
                         ]
                         
                         # 인플루언서별 해당 브랜드 배정수 계산
@@ -2262,9 +2492,11 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
                 influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수'] - (influencer_summary[f'{selected_brand}_집행수'] + influencer_summary[f'{selected_brand}_배정수'])
             else:
                 influencer_summary[f'{selected_brand}_집행수'] = 0
+                influencer_summary[f'{selected_brand}_배정수'] = 0
                 influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수']
         else:
             influencer_summary[f'{selected_brand}_집행수'] = 0
+            influencer_summary[f'{selected_brand}_배정수'] = 0
             influencer_summary[f'{selected_brand}_잔여수'] = influencer_summary[f'{selected_brand}_계약수']
     else:
         # 전체 선택 시 모든 브랜드 계약수 표시
@@ -2292,7 +2524,7 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
                     assignment_data = pd.read_csv(ASSIGNMENT_FILE, encoding="utf-8")
                     if not assignment_data.empty:
                         # 모든 브랜드의 배정완료 데이터 필터링
-                        all_assignments = assignment_data[assignment_data['결과'] == '배정완료']
+                        all_assignments = assignment_data[assignment_data['상태'] == '배정완료']
                         
                         # 인플루언서별 전체 배정수 계산
                         total_assigned = all_assignments.groupby('id').size()
@@ -2306,9 +2538,11 @@ def add_brand_details(influencer_summary, df, selected_brand_filter):
                 influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수'] - (influencer_summary['전체_집행수'] + influencer_summary['전체_배정수'])
             else:
                 influencer_summary['전체_집행수'] = 0
+                influencer_summary['전체_배정수'] = 0
                 influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수']
         else:
             influencer_summary['전체_집행수'] = 0
+            influencer_summary['전체_배정수'] = 0
             influencer_summary['전체_잔여수'] = influencer_summary['전체_계약수']
 
 def filter_by_season(influencer_summary, df, target_months):
@@ -2393,13 +2627,13 @@ def render_influencer_table(influencer_summary, selected_brand_filter, influence
     # 편집 가능한 데이터프레임으로 표시 (고정 너비로 일관된 레이아웃)
     with st.container():
         edited_influencer_df = st.data_editor(
-            influencer_summary,
-            use_container_width=True,
-            height=600,
-            hide_index=True,
-            key="influencer_data_editor",
-            column_config=get_influencer_column_config()
-        )
+        influencer_summary,
+        use_container_width=True,
+        height=600,
+        hide_index=True,
+        key="influencer_data_editor",
+        column_config=get_influencer_column_config()
+    )
     
     # 변경사항 처리
     handle_influencer_changes(edited_influencer_df)
@@ -2622,12 +2856,12 @@ def handle_influencer_changes(edited_influencer_df):
                             existing_mask = (
                                 (assignment_history['id'] == row['id']) &
                                 (assignment_history['브랜드'] == new_value) &
-                                (assignment_history['배정월'] == month)
-                            )
-                            
-                            if not existing_mask.any():
-                                new_assignments.append({
-                                    '브랜드': new_value,
+                            (assignment_history['배정월'] == month)
+                        )
+                        
+                        if not existing_mask.any():
+                            new_assignments.append({
+                                '브랜드': new_value,
                                     'id': row['id'],
                                     '이름': row['이름'],
                                     '배정월': month
@@ -2667,15 +2901,20 @@ def main():
     
     st.title("🎯 인플루언서 배정 앱")
     
-    # 앱 시작 시 GitHub에서 최신 데이터 가져오기 (조용히)
+    # 앱 시작 시 GitHub에서 최신 데이터 가져오기 (클라우드에서만)
     if 'data_synced' not in st.session_state:
-        with st.spinner("🔄 GitHub에서 최신 데이터를 가져오는 중..."):
-            # 조용히 데이터 가져오기 (알림 없이)
-            try:
-                result = subprocess.run(['git', 'pull', 'origin', 'master'], 
-                                      capture_output=True, text=True, cwd=SCRIPT_DIR)
-            except Exception as e:
-                pass  # 오류가 있어도 조용히 처리
+        # 클라우드에서만 자동 동기화 실행
+        if is_running_on_streamlit_cloud():
+            with st.spinner("🔄 GitHub에서 최신 데이터를 가져오는 중..."):
+                # 조용히 데이터 가져오기 (알림 없이)
+                try:
+                    result = subprocess.run(['git', 'pull', 'origin', 'master'], 
+                                          capture_output=True, text=True, cwd=SCRIPT_DIR)
+                except Exception as e:
+                    pass  # 오류가 있어도 조용히 처리
+        else:
+            # 로컬에서는 자동 동기화 비활성화
+            st.info("💻 로컬 환경에서 실행 중입니다. (자동 GitHub 동기화 비활성화)")
         st.session_state.data_synced = True
     
     # 데이터 로드
@@ -2691,7 +2930,7 @@ def main():
         st.session_state.current_tab = 0
     
     # 탭 생성
-    tab1, tab2 = st.tabs(["📊 배정 및 집행결과", "👥 인플루언서별"])
+    tab1, tab2 = st.tabs(["📊 배정 및 집행상태", "👥 인플루언서별"])
     
     # 현재 탭 상태 업데이트
     if tab1:
